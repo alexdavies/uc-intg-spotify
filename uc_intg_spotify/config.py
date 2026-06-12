@@ -140,6 +140,55 @@ class SpotifyConfig:
             _LOG.error("Error setting polling interval: %s", e)
             return False
     
+    def get_default_device(self) -> Optional[str]:
+        """Get the preferred playback device name (used when no device is active)."""
+        return self._config_data.get("default_device")
+
+    def set_default_device(self, name: Optional[str]) -> bool:
+        """
+        Set the preferred playback device name.
+
+        Args:
+            name: Device name (or part of it). Empty/None clears the setting.
+
+        Returns:
+            True if saved successfully, False otherwise
+        """
+        try:
+            if name:
+                self._config_data["default_device"] = name
+            else:
+                self._config_data.pop("default_device", None)
+            return self._save_config()
+        except Exception as e:
+            _LOG.error("Error setting default device: %s", e)
+            return False
+
+    def get_cached_devices(self) -> Dict[str, str]:
+        """Get previously seen Spotify Connect devices (name -> device ID)."""
+        return self._config_data.get("known_devices", {})
+
+    def cache_devices(self, devices: Dict[str, str]) -> bool:
+        """
+        Merge newly seen devices into the device cache.
+
+        Args:
+            devices: Mapping of device name to device ID
+
+        Returns:
+            True if saved successfully (or nothing changed), False otherwise
+        """
+        try:
+            known = self._config_data.get("known_devices", {})
+            updated = {**known, **devices}
+            if updated == known:
+                return True
+            self._config_data["known_devices"] = updated
+            return self._save_config()
+        except Exception as e:
+            _LOG.error("Error caching devices: %s", e)
+            return False
+
     def clear_tokens(self) -> bool:
         """Clear all stored tokens."""
         try:

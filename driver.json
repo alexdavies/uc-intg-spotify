@@ -1,12 +1,12 @@
 {
   "driver_id": "spotify",
-  "version": "1.0.6",
+  "version": "1.1.0",
   "min_core_api": "0.3.1",
   "name": {
     "en": "Spotify"
   },
   "description": {
-    "en": "Control Spotify playback and view currently playing track information."
+    "en": "Control Spotify playback, start your saved playlists and switch between Spotify Connect speakers, with currently playing track information."
   },
   "developer": {
     "name": "Meir Miyara",
@@ -54,6 +54,18 @@
           "text": {
             "value": "",
             "placeholder": "Enter your Spotify app Client Secret"
+          }
+        }
+      },
+      {
+        "id": "default_device",
+        "label": {
+          "en": "Default Playback Device (optional)"
+        },
+        "field": {
+          "text": {
+            "value": "",
+            "placeholder": "e.g. Beosound Emerge - used when nothing is playing"
           }
         }
       }

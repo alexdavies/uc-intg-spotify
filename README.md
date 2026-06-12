@@ -45,6 +45,9 @@ Your support helps maintain this integration. Thank you! ❤️
 - **Play/Pause Control** - Toggle playback
 - **Track Navigation** - Next/previous track
 - **Volume Control** - Set volume or use up/down
+- **Start Playlists** - Launch your saved playlists directly from the remote
+- **Speaker Selection** - List Spotify Connect devices and transfer playback between them
+- **Default Device** - Start playback on a preferred speaker when nothing is playing
 - **Physical Button Mapping** - UC Remote hardware buttons
 - **Remote Entity** - Custom UI with playback controls
 
@@ -131,7 +134,10 @@ docker run -d --name uc-spotify --restart unless-stopped --network host -v spoti
 2. Click **"Configure"**
 3. Enter your **Spotify Client ID**
 4. Enter your **Spotify Client Secret**
-5. Click **Next**
+5. Optionally enter a **Default Playback Device** (e.g. `Beosound Emerge`) - when nothing is playing, play commands and playlists will start on this speaker
+6. Click **Next**
+
+> **Upgrading from an earlier version?** Playlist support requires additional Spotify permissions. Re-run the integration setup (reconfigure) once so you can re-authorize with the new scopes.
 
 ### Step 2: Authentication
 
@@ -164,6 +170,8 @@ Two entities are created:
 - Next/previous track buttons
 - Volume control slider
 - Volume up/down buttons
+- **Source list** - your saved playlists; selecting one starts playing it
+- **Sound mode list** - available Spotify Connect speakers; selecting one transfers playback to it
 
 ### Remote Entity
 
@@ -174,7 +182,20 @@ Two entities are created:
   - **Volume Up** → Increase Volume
   - **Volume Down** → Decrease Volume
 - Custom UI with playback controls
+- **Playlists pages** - tap a saved playlist to start playing it (up to 24)
+- **Speakers page** - tap a speaker to transfer playback to it
+- Playlist and speaker buttons are also available as simple commands (`PL_...`, `DEV_...`) for use in activities and macros
 - Synchronized state with Spotify
+
+### Notes on Spotify Connect Speakers (e.g. Bang & Olufsen)
+
+The Spotify Web API can only see speakers that currently announce themselves to Spotify Connect. If a speaker is missing from the list:
+
+- Make sure it is awake (not in deep standby) and on the same Spotify account
+- Play something on it once via the Spotify app - the integration remembers speakers it has seen, so it stays selectable even when it temporarily drops out of the device list
+- Set it as the **Default Playback Device** during setup so play/playlist commands target it when nothing is playing
+
+The remote entity's playlist/speaker buttons are built when the integration starts. New playlists and speakers appear on the media player entity automatically; restart the integration to refresh the remote entity's button pages.
 
 ## Credits
 

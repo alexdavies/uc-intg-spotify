@@ -52,6 +52,8 @@ class SpotifySetup:
             if client_id and client_secret:
                 _LOG.info("App credentials provided, proceeding to authentication")
                 self._config.set_app_credentials(client_id, client_secret)
+                default_device = msg.setup_data.get("default_device", "").strip()
+                self._config.set_default_device(default_device)
                 return await self._show_authentication_screen()
             else:
                 _LOG.error("Missing client ID or client secret in setup data")

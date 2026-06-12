@@ -20,13 +20,17 @@ _LOG = logging.getLogger(__name__)
 class SpotifyMediaPlayer:
     """Spotify media player entity."""
     
-    def __init__(self, api: ucapi.IntegrationAPI, client: SpotifyClient):
+    def __init__(self, api: ucapi.IntegrationAPI, client: SpotifyClient,
+                 playlists: Optional[list] = None, devices: Optional[list] = None):
         """Initialize Spotify media player."""
         self._api = api
         self._client = client
         self._config: SpotifyConfig = client._config if client else None
         self._polling_task: Optional[asyncio.Task] = None
-        
+        # Playlists are exposed as sources, Spotify Connect devices as sound modes
+        self._playlist_uris: Dict[str, str] = {p["name"]: p["uri"] for p in (playlists or [])}
+        self._device_ids: Dict[str, str] = {d["name"]: d["id"] for d in (devices or []) if d.get("id")}
+
         features = [
             Features.ON_OFF,
             Features.MEDIA_DURATION,
@@ -41,8 +45,11 @@ class SpotifyMediaPlayer:
             Features.PREVIOUS,
             Features.VOLUME,
             Features.VOLUME_UP_DOWN,
+            Features.SELECT_SOURCE,
+            Features.SELECT_SOUND_MODE,
         ]
-        
+
+        active_device = next((d["name"] for d in (devices or []) if d.get("is_active")), "")
         attributes = {
             Attributes.STATE: States.OFF,
             Attributes.MEDIA_TITLE: "",
@@ -53,6 +60,10 @@ class SpotifyMediaPlayer:
             Attributes.MEDIA_IMAGE_URL: "",
             Attributes.VOLUME: 50,
             Attributes.MUTED: False,
+            Attributes.SOURCE: "",
+            Attributes.SOURCE_LIST: list(self._playlist_uris.keys()),
+            Attributes.SOUND_MODE: active_device,
+            Attributes.SOUND_MODE_LIST: list(self._device_ids.keys()),
         }
         
         self.entity = ucapi.MediaPlayer(
@@ -85,9 +96,15 @@ class SpotifyMediaPlayer:
         
     async def _poll_playback_state(self, interval_seconds: int):
         """Periodically poll for playback state."""
+        cycle = 0
         while True:
             try:
                 if self._client.is_authenticated():
+                    await self._refresh_devices()
+                    # Playlists change rarely - refresh every 10th cycle
+                    if cycle % 10 == 0:
+                        await self._refresh_playlists()
+
                     track_data = await self._client.get_currently_playing()
                     if track_data:
                         await self.update_current_track(track_data)
@@ -97,8 +114,43 @@ class SpotifyMediaPlayer:
                     _LOG.debug("Polling skipped: client not authenticated.")
             except Exception as e:
                 _LOG.error(f"Error during polling: {e}", exc_info=True)
-            
+
+            cycle += 1
             await asyncio.sleep(interval_seconds)
+
+    async def _refresh_devices(self) -> None:
+        """Refresh the list of available Spotify Connect devices (sound modes)."""
+        devices = await self._client.get_devices()
+        if not devices and not self._device_ids:
+            return
+
+        device_ids = {d["name"]: d["id"] for d in devices if d.get("id")}
+        # Keep previously seen devices selectable even when they temporarily
+        # drop out of the list (e.g. speakers in network standby).
+        for name, device_id in self._config.get_cached_devices().items():
+            device_ids.setdefault(name, device_id)
+        self._device_ids = device_ids
+
+        new_list = list(self._device_ids.keys())
+        if self.entity.attributes.get(Attributes.SOUND_MODE_LIST) != new_list:
+            self._api.configured_entities.update_attributes(
+                self.entity.id, {Attributes.SOUND_MODE_LIST: new_list}
+            )
+            _LOG.debug("Updated device list: %s", new_list)
+
+    async def _refresh_playlists(self) -> None:
+        """Refresh the list of saved playlists (sources)."""
+        playlists = await self._client.get_playlists()
+        if not playlists:
+            return
+
+        self._playlist_uris = {p["name"]: p["uri"] for p in playlists}
+        new_list = list(self._playlist_uris.keys())
+        if self.entity.attributes.get(Attributes.SOURCE_LIST) != new_list:
+            self._api.configured_entities.update_attributes(
+                self.entity.id, {Attributes.SOURCE_LIST: new_list}
+            )
+            _LOG.debug("Updated playlist list: %d playlists", len(new_list))
 
     async def cmd_handler(self, entity: ucapi.Entity, cmd_id: str, params: dict[str, Any] | None) -> ucapi.StatusCodes:
         """Handle media player commands."""
@@ -125,6 +177,10 @@ class SpotifyMediaPlayer:
                 return await self._handle_volume_up()
             elif cmd_id == Commands.VOLUME_DOWN:
                 return await self._handle_volume_down()
+            elif cmd_id == Commands.SELECT_SOURCE:
+                return await self._handle_select_source(params)
+            elif cmd_id == Commands.SELECT_SOUND_MODE:
+                return await self._handle_select_sound_mode(params)
             else:
                 _LOG.info("Unhandled command %s - ignoring", cmd_id)
                 return ucapi.StatusCodes.OK
@@ -148,6 +204,44 @@ class SpotifyMediaPlayer:
         success = await self._client.previous_track()
         return ucapi.StatusCodes.OK if success else ucapi.StatusCodes.SERVER_ERROR
     
+    async def _handle_select_source(self, params: dict[str, Any] | None) -> ucapi.StatusCodes:
+        """Handle source selection: start playing the chosen playlist."""
+        if not params or "source" not in params:
+            return ucapi.StatusCodes.BAD_REQUEST
+
+        playlist_name = params["source"]
+        context_uri = self._playlist_uris.get(playlist_name)
+        if not context_uri:
+            _LOG.warning("Unknown playlist selected: %s", playlist_name)
+            return ucapi.StatusCodes.BAD_REQUEST
+
+        device_id = await self._client.resolve_target_device()
+        success = await self._client.start_playback(context_uri=context_uri, device_id=device_id)
+        if success:
+            self._api.configured_entities.update_attributes(
+                self.entity.id,
+                {Attributes.SOURCE: playlist_name, Attributes.STATE: States.PLAYING}
+            )
+        return ucapi.StatusCodes.OK if success else ucapi.StatusCodes.SERVER_ERROR
+
+    async def _handle_select_sound_mode(self, params: dict[str, Any] | None) -> ucapi.StatusCodes:
+        """Handle sound mode selection: transfer playback to the chosen device."""
+        device_name = (params or {}).get("mode") or (params or {}).get("sound_mode")
+        if not device_name:
+            return ucapi.StatusCodes.BAD_REQUEST
+
+        device_id = self._device_ids.get(device_name)
+        if not device_id:
+            _LOG.warning("Unknown device selected: %s", device_name)
+            return ucapi.StatusCodes.BAD_REQUEST
+
+        success = await self._client.transfer_playback(device_id)
+        if success:
+            self._api.configured_entities.update_attributes(
+                self.entity.id, {Attributes.SOUND_MODE: device_name}
+            )
+        return ucapi.StatusCodes.OK if success else ucapi.StatusCodes.SERVER_ERROR
+
     async def _handle_volume(self, params: dict[str, Any] | None) -> ucapi.StatusCodes:
         """Handle volume set command."""
         if not params or "volume" not in params:
@@ -203,8 +297,22 @@ class SpotifyMediaPlayer:
             attributes[Attributes.MEDIA_DURATION] = track_data.get("duration_ms", 0) // 1000
             attributes[Attributes.MEDIA_POSITION] = track_data.get("progress_ms", 0) // 1000
             attributes[Attributes.MEDIA_IMAGE_URL] = track_data.get("image_url", "")
-            attributes[Attributes.VOLUME] = track_data.get("volume_percent", 50)
-            attributes[Attributes.MUTED] = track_data.get("volume_percent", 50) == 0
+
+            volume_percent = track_data.get("volume_percent")
+            if volume_percent is not None:
+                attributes[Attributes.VOLUME] = volume_percent
+                attributes[Attributes.MUTED] = volume_percent == 0
+
+            device_name = track_data.get("device_name")
+            if device_name:
+                attributes[Attributes.SOUND_MODE] = device_name
+
+            context_uri = track_data.get("context_uri")
+            if context_uri:
+                source = next(
+                    (name for name, uri in self._playlist_uris.items() if uri == context_uri), ""
+                )
+                attributes[Attributes.SOURCE] = source
 
             # Only send update if attributes have changed
             changed_attrs = {k: v for k, v in attributes.items() if self.entity.attributes.get(k) != v}
