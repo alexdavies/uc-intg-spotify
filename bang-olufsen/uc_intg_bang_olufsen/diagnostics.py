@@ -35,6 +35,8 @@ import logging
 import sys
 from typing import Optional
 
+import aiohttp
+
 from uc_intg_bang_olufsen.client import BeoClient
 from uc_intg_bang_olufsen.discovery import discover_devices
 
@@ -216,6 +218,132 @@ async def cmd_info(args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Identify: which B&O protocol does a speaker speak? (Phase 2 prep)
+# ---------------------------------------------------------------------------
+
+# Legacy "ASE"/BeoNetRemote speakers (older Beoplay A9, Beosound 35, ...) answer
+# a device descriptor at :8080/BeoDevice. Mozart speakers do not.
+LEGACY_PATHS = [
+    "http://{host}:8080/BeoDevice",
+    "http://{host}/BeoDevice",
+]
+# mDNS service types worth checking, by protocol family.
+SERVICE_TYPES = {
+    "_bangolufsen._tcp.local.": "Mozart",
+    "_beoremote._tcp.local.": "Legacy (ASE/BeoNetRemote)",
+    "_beozone._tcp.local.": "Legacy (ASE/BeoZone)",
+    "_products._tcp.local.": "Legacy (B&O products)",
+}
+
+
+async def cmd_identify(args) -> int:
+    _header(f"Identify protocol for {args.host}")
+    verdict = "unknown"
+
+    # 1. Mozart? Reuse the same client the integration uses.
+    bc = BeoClient(args.host)
+    try:
+        if await bc.connect():
+            _ok("responds to the Mozart API -> this is a MOZART speaker")
+            verdict = "mozart"
+        else:
+            _info("no Mozart response (expected for an older Beoplay A9)")
+    except Exception as e:
+        _info(f"no Mozart response: {type(e).__name__}")
+    finally:
+        await bc.close()
+
+    # 2. Legacy ASE / BeoNetRemote descriptor?
+    legacy_body = None
+    async with aiohttp.ClientSession() as session:
+        for template in LEGACY_PATHS:
+            url = template.format(host=args.host)
+            try:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                    text = await resp.text()
+                    if resp.status == 200 and text:
+                        _ok(f"legacy descriptor at {url} (HTTP 200)")
+                        legacy_body = text
+                        if verdict == "unknown":
+                            verdict = "legacy"
+                        break
+                    _info(f"{url} -> HTTP {resp.status}")
+            except Exception as e:
+                _info(f"{url} -> {type(e).__name__}")
+
+    if legacy_body:
+        for field in ("productType", "productName", "FriendlyName", "name", "softwareVersion", "typeNumber"):
+            value = _extract(legacy_body, field)
+            if value:
+                print(f"           {field}: {value}")
+        print(f"           (raw snippet) {legacy_body[:200].strip()}")
+
+    # 3. What does it advertise over mDNS?
+    _header("mDNS services advertised nearby")
+    seen = await _scan_services(args.timeout)
+    if not seen:
+        _info("no B&O mDNS services seen (network may block multicast)")
+    for stype, entries in seen.items():
+        family = SERVICE_TYPES.get(stype, stype)
+        for name, addrs in entries:
+            marker = " <-- THIS HOST" if args.host in addrs else ""
+            _ok(f"{family}: {name} {addrs}{marker}")
+
+    # Verdict
+    _header("Verdict")
+    if verdict == "mozart":
+        print("  MOZART speaker - already supported by this integration (Phase 1).")
+    elif verdict == "legacy":
+        print("  LEGACY (ASE/BeoNetRemote) speaker - this is the Phase 2 target.")
+        print("  Paste this whole output back and I'll build the legacy backend to match.")
+    else:
+        print("  Could not classify. Paste this output back and we'll work it out.")
+        print("  (Confirm the IP is correct and the speaker is awake.)")
+    return 0
+
+
+async def _scan_services(timeout: float) -> dict:
+    """Browse several B&O mDNS service types; return {type: [(name, [addrs])]}."""
+    from zeroconf import ServiceStateChange
+    from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZeroconf
+
+    results: dict = {}
+    azc = AsyncZeroconf()
+    pending = []
+
+    async def _resolve(stype, name):
+        info = AsyncServiceInfo(stype, name)
+        if await info.async_request(azc.zeroconf, 3000):
+            addrs = info.parsed_addresses() or []
+            results.setdefault(stype, []).append((name.split(".")[0], addrs))
+
+    def _on_change(zeroconf, service_type, name, state_change):
+        if state_change is ServiceStateChange.Added:
+            pending.append(asyncio.ensure_future(_resolve(service_type, name)))
+
+    browsers = [AsyncServiceBrowser(azc.zeroconf, stype, handlers=[_on_change]) for stype in SERVICE_TYPES]
+    try:
+        await asyncio.sleep(timeout)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+    finally:
+        for b in browsers:
+            await b.async_cancel()
+        await azc.async_close()
+    return results
+
+
+def _extract(xml_or_json: str, field: str) -> Optional[str]:
+    """Best-effort scrape of <field>value</field> or "field": "value"."""
+    import re
+    m = re.search(rf"<{field}>([^<]+)</{field}>", xml_or_json, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    m = re.search(rf'"{field}"\s*:\s*"([^"]+)"', xml_or_json, re.IGNORECASE)
+    return m.group(1).strip() if m else None
+
+
+# ---------------------------------------------------------------------------
 # Stage 3: real-time push (WebSocket)
 # ---------------------------------------------------------------------------
 
@@ -301,6 +429,11 @@ def _build_parser() -> argparse.ArgumentParser:
     i = sub.add_parser("info", help="Stage 2: read-only probe of a speaker")
     i.add_argument("host")
     i.set_defaults(func=cmd_info)
+
+    idf = sub.add_parser("identify", help="Identify which B&O protocol a speaker speaks (Phase 2 prep)")
+    idf.add_argument("host")
+    idf.add_argument("--timeout", type=float, default=6.0)
+    idf.set_defaults(func=cmd_identify)
 
     l = sub.add_parser("listen", help="Stage 3: watch real-time push events")
     l.add_argument("host")

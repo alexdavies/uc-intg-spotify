@@ -97,6 +97,21 @@ python -u uc_intg_bang_olufsen/driver.py
 Then add the integration on the Remote, run setup (it scans and lists the
 Emerge), and confirm the media-player and remote entities appear and work.
 
+## Phase 2 prep — identify the Beoplay A9's protocol
+
+Before building local control for the older A9, confirm what it actually speaks.
+Get the A9's IP (from your router, or it's the device the Spotify integration
+sees), then:
+
+```bash
+python -m uc_intg_bang_olufsen.diagnostics identify <A9_IP>
+```
+
+This is read-only. It tests the Mozart API, the legacy `:8080/BeoDevice`
+descriptor, and the B&O mDNS service types, then prints a verdict
+(Mozart / Legacy-ASE / Unknown) plus the evidence. Paste the whole output back
+and I'll build the Phase 2 backend to match exactly what your A9 exposes.
+
 ---
 
 ### What I most need back from you
