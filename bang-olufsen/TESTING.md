@@ -109,8 +109,19 @@ python -m uc_intg_bang_olufsen.diagnostics identify <A9_IP>
 
 This is read-only. It tests the Mozart API, the legacy `:8080/BeoDevice`
 descriptor, and the B&O mDNS service types, then prints a verdict
-(Mozart / Legacy-ASE / Unknown) plus the evidence. Paste the whole output back
-and I'll build the Phase 2 backend to match exactly what your A9 exposes.
+(Mozart / Legacy-ASE / Unknown) plus the evidence.
+
+If the verdict is **Legacy**, follow up with the deeper probe so the backend is
+built against the device's real API shapes (especially radio favourites and the
+notification format, which vary by firmware). Start radio playing on the A9, then:
+
+```bash
+python -m uc_intg_bang_olufsen.diagnostics legacy-probe <A9_IP>
+```
+
+This is also read-only: it dumps the `/BeoZone` endpoints and listens to the
+`/BeoNotify` stream for ~12s. Paste the whole output back and I'll build the
+Phase 2 backend to match exactly what your A9 exposes.
 
 ---
 

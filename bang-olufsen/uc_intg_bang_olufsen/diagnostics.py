@@ -344,8 +344,87 @@ def _extract(xml_or_json: str, field: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# Stage 3: real-time push (WebSocket)
+# Legacy probe: dump the ASE/BeoZone API surface (Phase 2 backend prep)
 # ---------------------------------------------------------------------------
+
+# Read-only GET endpoints on the legacy ASE platform (Beoplay A9 4th gen etc.),
+# served on port 8080. We dump these so the Phase 2 backend is built against the
+# device's real JSON shapes - especially radio favourites, whose endpoint varies.
+LEGACY_GET_ENDPOINTS = [
+    "/BeoDevice",
+    "/BeoZone/Zone/Sources",
+    "/BeoZone/Zone/ActiveSources",
+    "/BeoZone/Zone/Sound/Volume/Speaker/Level",
+    "/BeoZone/Zone/Sound/Volume/Speaker/Muted",
+    "/BeoZone/Zone/Stream",
+    "/BeoZone/Zone/PlayQueue",
+    # Radio favourites / presets are exposed differently across firmwares; probe
+    # every known candidate and report which one answers.
+    "/BeoZone/Zone/Favorites",
+    "/BeoZone/Zone/Favorites/",
+    "/BeoZone/Zone/Lists",
+    "/BeoZone/Zone/Lists/FavoriteLists",
+    "/BeoContent/RadioFavorites",
+    "/BeoOneWay/Favorites",
+]
+
+
+async def cmd_legacy_probe(args) -> int:
+    _header(f"Legacy ASE/BeoZone probe of {args.host}")
+    base = f"http://{args.host}:8080"
+
+    async with aiohttp.ClientSession() as session:
+        for path in LEGACY_GET_ENDPOINTS:
+            url = base + path
+            try:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=4, connect=3, sock_connect=3)) as resp:
+                    text = (await resp.text()).strip()
+                    if resp.status == 200 and text:
+                        _ok(f"{path}")
+                        print(f"           {text[:600]}")
+                    else:
+                        _info(f"{path} -> HTTP {resp.status}")
+            except Exception as e:
+                _info(f"{path} -> {type(e).__name__}")
+
+    _header(f"Live notifications ({args.seconds:.0f}s) - touch the speaker / play radio now")
+    await _stream_legacy_notifications(base, args.seconds)
+
+    _header("Done")
+    print("  Paste this whole output back. I especially need:")
+    print("   - which Favorites/Lists endpoint returned 200 (radio favourites)")
+    print("   - the notification 'type' values you saw when you changed things")
+    print("   - the volume Level JSON shape (for correct scaling)")
+    return 0
+
+
+async def _stream_legacy_notifications(base: str, seconds: float) -> None:
+    """Read the BeoNotify long-poll stream briefly and print event types seen."""
+    url = base + "/BeoNotify/Notifications"
+    seen_types: dict = {}
+
+    async def _reader():
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=None, connect=4, sock_connect=4)) as resp:
+                async for raw in resp.content:
+                    line = raw.decode(errors="replace").strip()
+                    if not line:
+                        continue
+                    ntype = _extract(line, "type") or "(unknown)"
+                    if ntype not in seen_types:
+                        seen_types[ntype] = line[:300]
+                        _ok(f"notification type: {ntype}")
+                        print(f"           {line[:300]}")
+
+    try:
+        await asyncio.wait_for(_reader(), timeout=seconds)
+    except asyncio.TimeoutError:
+        pass
+    except Exception as e:
+        _info(f"notification stream error: {type(e).__name__}: {e}")
+    if not seen_types:
+        _info("no notifications captured (try again while pressing play / changing volume)")
+
 
 async def cmd_listen(args) -> int:
     _header(f"Stage 3: real-time notifications from {args.host} ({args.seconds:.0f}s)")
@@ -434,6 +513,11 @@ def _build_parser() -> argparse.ArgumentParser:
     idf.add_argument("host")
     idf.add_argument("--timeout", type=float, default=6.0)
     idf.set_defaults(func=cmd_identify)
+
+    lp = sub.add_parser("legacy-probe", help="Dump a legacy ASE speaker's API surface (Phase 2 backend prep)")
+    lp.add_argument("host")
+    lp.add_argument("--seconds", type=float, default=12.0)
+    lp.set_defaults(func=cmd_legacy_probe)
 
     l = sub.add_parser("listen", help="Stage 3: watch real-time push events")
     l.add_argument("host")
