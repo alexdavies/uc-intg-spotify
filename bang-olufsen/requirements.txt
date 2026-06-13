@@ -1,0 +1,5 @@
+ucapi==0.5.2
+mozart-api>=4.0.0
+zeroconf>=0.131.0
+aiohttp>=3.8.0
+certifi
