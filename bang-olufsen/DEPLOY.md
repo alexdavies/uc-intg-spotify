@@ -25,14 +25,19 @@ On the machine (must be on the same LAN/VLAN as the Remote and speakers):
 ```bash
 cd bang-olufsen
 pip install -r requirements.txt
-UC_INTEGRATION_HTTP_PORT=9090 UC_INTEGRATION_INTERFACE=0.0.0.0 \
+export MAC_IP=$(ipconfig getifaddr en0)   # macOS Wi-Fi; Linux: hostname -I | awk '{print $1}'
+UC_INTEGRATION_INTERFACE=$MAC_IP UC_INTEGRATION_HTTP_PORT=9090 \
   python -u uc_intg_bang_olufsen/driver.py
 ```
 
+> **Important:** set `UC_INTEGRATION_INTERFACE` to the machine's **real LAN IP**,
+> not `0.0.0.0`. ucapi puts that value straight into the mDNS record, so `0.0.0.0`
+> (or leaving it unset on a multi-interface machine) makes the Remote discover the
+> integration but fail to connect with *"Service is currently not available."*
+
 The driver advertises itself over mDNS. In the Remote's **Web Configurator →
 Integrations → Add new**, it should appear for you to add and run setup
-(discovery of your speakers). If it doesn't auto-appear, add it manually by the
-machine's IP and port 9090.
+(discovery of your speakers).
 
 Keep the process running while you use it. This is the best way to iterate:
 when I push a fix, you just `git pull` and restart.
