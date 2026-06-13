@@ -39,6 +39,7 @@ import aiohttp
 
 from uc_intg_bang_olufsen.client import BeoClient
 from uc_intg_bang_olufsen.discovery import discover_devices
+from uc_intg_bang_olufsen.factory import create_client, detect_protocol
 
 # Quiet the library; the diagnostics print their own clear output.
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s | %(name)s | %(message)s")
@@ -149,6 +150,13 @@ async def cmd_discover(args) -> int:
 
 async def cmd_info(args) -> int:
     _header(f"Stage 2: read-only probe of {args.host}")
+
+    protocol = await detect_protocol(args.host)
+    if protocol == "legacy":
+        _info("this is a LEGACY speaker - running the common-interface probe")
+        _info("(use 'legacy-probe' for the full ASE endpoint dump)")
+        return await _info_via_interface(args.host)
+
     bc = BeoClient(args.host)
     raw = bc._client  # the underlying mozart-api client; probe it directly so
     failures = 0      # real exceptions (incl. auth errors) surface clearly.
@@ -215,6 +223,33 @@ async def cmd_info(args) -> int:
         return 1
     print("Stage 2 PASSED. API assumptions hold. Next: 'listen' then individual commands.")
     return 0
+
+
+async def _info_via_interface(host: str) -> int:
+    """Backend-agnostic read-only probe using the common client interface."""
+    client = create_client(host, protocol="legacy")
+    failures = 0
+    try:
+        if await client.connect():
+            _ok("device reachable")
+        else:
+            _fail("device not reachable")
+            failures += 1
+
+        sources = await client.get_sources()
+        if sources:
+            _ok(f"{len(sources)} source(s): " + ", ".join(s["name"] for s in sources))
+        else:
+            _info("no sources reported")
+
+        state = await client.get_state()
+        _ok(f"state snapshot: {state if state else '(empty)'}")
+    finally:
+        await client.close()
+
+    print()
+    print("Stage 2 PASSED." if not failures else f"Stage 2 finished with {failures} problem(s).")
+    return 1 if failures else 0
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +463,10 @@ async def _stream_legacy_notifications(base: str, seconds: float) -> None:
 
 async def cmd_listen(args) -> int:
     _header(f"Stage 3: real-time notifications from {args.host} ({args.seconds:.0f}s)")
-    bc = BeoClient(args.host)
+    bc = await _client_for(args.host)
+    if bc is None:
+        _fail(f"{args.host} not reachable as a Mozart or legacy speaker")
+        return 1
 
     async def on_update(attrs):
         print(f"  [PUSH] {attrs}")
@@ -451,9 +489,21 @@ async def cmd_listen(args) -> int:
 # Stage 4: individual commands
 # ---------------------------------------------------------------------------
 
+async def _client_for(host: str):
+    """Detect the speaker's protocol and return the right client (or None)."""
+    protocol = await detect_protocol(host)
+    if not protocol:
+        return None
+    _info(f"detected protocol: {protocol}")
+    return create_client(host, protocol=protocol)
+
+
 async def _run_command(host: str, label: str, coro_factory) -> int:
     _header(f"Stage 4: {label} -> {host}")
-    bc = BeoClient(host)
+    bc = await _client_for(host)
+    if bc is None:
+        _fail(f"{host} not reachable as a Mozart or legacy speaker")
+        return 1
     try:
         ok = await coro_factory(bc)
         if ok:

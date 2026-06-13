@@ -123,6 +123,25 @@ This is also read-only: it dumps the `/BeoZone` endpoints and listens to the
 `/BeoNotify` stream for ~12s. Paste the whole output back and I'll build the
 Phase 2 backend to match exactly what your A9 exposes.
 
+## Testing the legacy A9 backend
+
+The diagnostics commands auto-detect the protocol, so the same commands work on
+the A9 (they route to the legacy backend automatically):
+
+```bash
+python -m uc_intg_bang_olufsen.diagnostics info    <A9_IP>   # sources + state
+python -m uc_intg_bang_olufsen.diagnostics listen  <A9_IP>   # live BeoNotify events
+python -m uc_intg_bang_olufsen.diagnostics play    <A9_IP>
+python -m uc_intg_bang_olufsen.diagnostics pause   <A9_IP>
+python -m uc_intg_bang_olufsen.diagnostics volume  <A9_IP> 20
+python -m uc_intg_bang_olufsen.diagnostics source  <A9_IP> <source_id_from_info>
+```
+
+`info` will list the A9's source IDs; use one of those with `source` to switch
+inputs (e.g. select "B&O Radio"). `preset` will report that the A9 has no preset
+API — that's expected. Watch the speaker react and confirm `listen` shows
+`[PUSH]` lines when you change volume or track.
+
 ---
 
 ### What I most need back from you

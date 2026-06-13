@@ -16,9 +16,9 @@ from typing import Any, Callable, Coroutine, List
 
 import ucapi
 
-from uc_intg_bang_olufsen.client import BeoClient
 from uc_intg_bang_olufsen.config import BeoConfig
 from uc_intg_bang_olufsen.discovery import discover_devices
+from uc_intg_bang_olufsen.factory import PROTOCOL_MOZART, detect_protocol
 
 _LOG = logging.getLogger(__name__)
 
@@ -93,17 +93,19 @@ class BeoSetup:
         if selected:
             match = next((d for d in self._discovered if d["serial"] == selected), None)
             if match:
+                # Discovered via the Mozart (_bangolufsen) mDNS service.
+                match.setdefault("protocol", PROTOCOL_MOZART)
                 devices.append(match)
 
         manual_host = (msg.input_values.get("manual_host") or "").strip()
         if manual_host:
-            client = BeoClient(manual_host)
-            reachable = await client.connect()
-            await client.close()
-            if not reachable:
-                _LOG.error("Manual device %s is not reachable", manual_host)
+            protocol = await detect_protocol(manual_host)
+            if not protocol:
+                _LOG.error("Manual device %s is not reachable / not recognised", manual_host)
                 return ucapi.SetupError(ucapi.IntegrationSetupError.CONNECTION_REFUSED)
-            devices.append({"host": manual_host, "name": manual_host, "serial": manual_host, "model": ""})
+            _LOG.info("Manual device %s detected as %s", manual_host, protocol)
+            devices.append({"host": manual_host, "name": manual_host, "serial": manual_host,
+                            "model": "", "protocol": protocol})
 
         if not devices:
             _LOG.error("No speakers selected or entered")

@@ -17,8 +17,8 @@ from typing import Dict, List, Optional
 
 import ucapi
 
-from uc_intg_bang_olufsen.client import BeoClient
 from uc_intg_bang_olufsen.config import BeoConfig
+from uc_intg_bang_olufsen.factory import AnyBeoClient, create_client
 from uc_intg_bang_olufsen.media_player import BeoMediaPlayer
 from uc_intg_bang_olufsen.remote import BeoRemote
 from uc_intg_bang_olufsen.setup import BeoSetup
@@ -35,7 +35,7 @@ api: Optional[ucapi.IntegrationAPI] = None
 config: Optional[BeoConfig] = None
 
 # serial -> client / entities
-clients: Dict[str, BeoClient] = {}
+clients: Dict[str, AnyBeoClient] = {}
 media_players: Dict[str, BeoMediaPlayer] = {}
 
 
@@ -53,7 +53,10 @@ async def on_setup_complete():
         serial = device.get("serial") or device.get("host")
         if serial in clients:
             continue
-        client = BeoClient(device["host"], device.get("name"), serial)
+        client = create_client(
+            device["host"], device.get("name"), serial,
+            protocol=device.get("protocol", "mozart"),
+        )
         clients[serial] = client
 
         sources = await client.get_sources()
