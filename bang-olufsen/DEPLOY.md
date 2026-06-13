@@ -7,8 +7,9 @@ validates the uploaded archive, and a broken integration simply fails to load �
 you then delete it from the web configurator. It does not touch the Remote's
 firmware. And Route A below installs nothing on the device at all.
 
-`driver_id` is `bang_olufsen`, which cannot collide with the Spotify integration
-(`spotify`). You can run both.
+`driver_id` is `bang_olufsen_local` — deliberately distinct from the Remote's
+**built-in** Bang & Olufsen integration (which uses `bang_olufsen`) and from the
+Spotify integration (`spotify`). You can run all of them side by side.
 
 ---
 
@@ -53,8 +54,8 @@ Build it in CI (no local cross-compiling needed):
 
 1. GitHub → **Actions** tab → **"Build Bang & Olufsen Integration"** → **Run
    workflow** on branch `claude/youthful-allen-cdpu5w`.
-2. When it finishes, download the `uc-intg-bang_olufsen-<version>-aarch64`
-   artifact and unzip it to get `uc-intg-bang_olufsen-<version>-aarch64.tar.gz`.
+2. When it finishes, download the `uc-intg-bang_olufsen_local-<version>-aarch64`
+   artifact and unzip it to get `uc-intg-bang_olufsen_local-<version>-aarch64.tar.gz`.
    **Do not unzip the inner `.tar.gz`.**
 
 ### 2. Upload it
@@ -68,7 +69,7 @@ Either:
   ```bash
   curl --location 'http://<REMOTE_IP>/api/intg/install' \
     --user 'web-configurator:<PIN>' \
-    --form 'file=@"uc-intg-bang_olufsen-<version>-aarch64.tar.gz"'
+    --form 'file=@"uc-intg-bang_olufsen_local-<version>-aarch64.tar.gz"'
   ```
 
 Then run the integration's setup from the Integrations list to discover your

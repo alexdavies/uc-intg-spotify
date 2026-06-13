@@ -1,9 +1,9 @@
 {
-  "driver_id": "bang_olufsen",
+  "driver_id": "bang_olufsen_local",
   "version": "0.1.0",
   "min_core_api": "0.3.1",
   "name": {
-    "en": "Bang & Olufsen"
+    "en": "Bang & Olufsen (Local)"
   },
   "description": {
     "en": "Local control of Bang & Olufsen speakers on your network. Supports modern 'Mozart' speakers (e.g. Beosound Emerge) and older 'ASE' speakers (e.g. Beoplay A9 4th gen): discovery, transport, volume, source selection, real-time now-playing, radio favourites (Mozart) and Beolink multiroom."
