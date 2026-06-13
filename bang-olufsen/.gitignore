@@ -1,0 +1,14 @@
+# Build artifacts
+build/
+dist/
+artifacts/
+*.spec
+*.tar.gz
+
+# Runtime config (may contain device details)
+config.json
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/

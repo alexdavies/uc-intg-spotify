@@ -3,15 +3,16 @@
   "version": "0.1.0",
   "min_core_api": "0.3.1",
   "name": {
-    "en": "Bang & Olufsen (Mozart)"
+    "en": "Bang & Olufsen"
   },
   "description": {
-    "en": "Local control of Bang & Olufsen Mozart speakers (Beosound Emerge, Balance, Level, A5, A9 5th gen, ...). Discovery, transport, volume, source and radio-favourite control, plus Beolink multiroom."
+    "en": "Local control of Bang & Olufsen speakers on your network. Supports modern 'Mozart' speakers (e.g. Beosound Emerge) and older 'ASE' speakers (e.g. Beoplay A9 4th gen): discovery, transport, volume, source selection, real-time now-playing, radio favourites (Mozart) and Beolink multiroom."
   },
   "developer": {
-    "name": "Meir Miyara"
+    "name": "alexdavies",
+    "url": "https://github.com/alexdavies/uc-intg-spotify"
   },
-  "home_page": "https://github.com/mase1981/uc-intg-spotify",
+  "home_page": "https://github.com/alexdavies/uc-intg-spotify/tree/main/bang-olufsen",
   "setup_data_schema": {
     "title": {
       "en": "Bang & Olufsen Setup"
@@ -25,13 +26,13 @@
         "field": {
           "label": {
             "value": {
-              "en": "This integration controls Bang & Olufsen 'Mozart' platform speakers on your local network (e.g. Beosound Emerge). Press Next to scan your network for speakers."
+              "en": "This integration controls Bang & Olufsen speakers on your local network. Press Next to scan for speakers; you can also add one by IP address (useful for older models that don't appear in discovery)."
             }
           }
         }
       }
     ]
   },
-  "release_date": "2024-08-06",
+  "release_date": "2026-06-13",
   "icon": "uc:speaker"
 }
