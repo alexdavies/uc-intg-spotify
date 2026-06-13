@@ -46,6 +46,7 @@ class LegacyBeoClient:
         self._base = f"http://{host}:8080"
         self._session: Optional[aiohttp.ClientSession] = None
         self._notify_task: Optional[asyncio.Task] = None
+        self._is_playing: Optional[bool] = None
         self.on_update: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]] = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
@@ -147,6 +148,12 @@ class LegacyBeoClient:
     async def stop(self) -> bool:
         return await self._command("POST", "/BeoZone/Zone/Stream/Stop")
 
+    async def play_pause(self) -> bool:
+        """Toggle play/pause using the last state seen on the notification stream."""
+        if self._is_playing:
+            return await self.pause()
+        return await self.play()
+
     async def next_track(self) -> bool:
         return await self._command("POST", "/BeoZone/Zone/Stream/Forward")
 
@@ -225,6 +232,8 @@ class LegacyBeoClient:
         ntype = note.get("type")
         data = note.get("data") or {}
         attrs = _notification_to_attrs(ntype, data)
+        if "playing" in attrs:
+            self._is_playing = attrs["playing"]
         if attrs and self.on_update:
             result = self.on_update(attrs)
             if hasattr(result, "__await__"):

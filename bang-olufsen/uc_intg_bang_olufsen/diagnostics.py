@@ -184,13 +184,16 @@ async def cmd_info(args) -> int:
         _fail(f"get_beolink_self failed: {type(e).__name__}: {e}")
         failures += 1
 
-    # 2c. sources
+    # 2c. sources (show raw flags so we can see what is selectable)
     try:
         sources = await bc.get_sources()
         if sources:
-            _ok(f"{len(sources)} playable source(s): " + ", ".join(s["name"] for s in sources))
+            _ok(f"{len(sources)} selectable source(s): " + ", ".join(s["name"] for s in sources))
         else:
-            _info("no playable sources reported (may be normal if idle)")
+            _info("no selectable sources reported (may be normal if idle)")
+        raw = await bc._client.get_available_sources(target_remote=False)
+        for s in (raw.items or []):
+            print(f"           src id={s.id!r} name={s.name!r} enabled={s.is_enabled} playable={s.is_playable}")
     except Exception as e:
         _fail(f"sources probe failed: {type(e).__name__}: {e}")
         failures += 1

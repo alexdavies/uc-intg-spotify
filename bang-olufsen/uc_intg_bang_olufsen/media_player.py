@@ -120,8 +120,9 @@ class BeoMediaPlayer:
             return ucapi.StatusCodes.SERVER_ERROR
 
     async def _play_pause(self) -> bool:
-        playing = self.entity.attributes.get(Attributes.STATE) == States.PLAYING
-        return await (self._client.pause() if playing else self._client.play())
+        # The client decides direction from the device's live/last-known state,
+        # so a stale cached attribute can't make this re-issue play.
+        return await self._client.play_pause()
 
     async def _mute_toggle(self) -> bool:
         muted = bool(self.entity.attributes.get(Attributes.MUTED))

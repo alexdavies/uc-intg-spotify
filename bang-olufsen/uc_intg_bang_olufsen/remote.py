@@ -152,10 +152,7 @@ class BeoRemote:
         return ucapi.StatusCodes.NOT_IMPLEMENTED
 
     async def _play_pause(self) -> bool:
-        # The remote has no cached transport state; toggle via play then pause is
-        # not possible, so default to play (resumes/wakes). Pause is available
-        # through the media player entity.
-        return await self._client.play()
+        return await self._client.play_pause()
 
     async def _nudge(self, delta: int) -> bool:
         snapshot = await self._client.get_state()

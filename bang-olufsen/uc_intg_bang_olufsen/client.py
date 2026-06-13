@@ -119,8 +119,11 @@ class BeoClient:
 
         result = []
         for source in (sources.items or []):
-            if source.is_enabled and source.is_playable and source.id:
-                result.append({"id": source.id, "name": source.name or source.id})
+            # is_enabled / is_playable are Optional and often None or False when
+            # idle, so only exclude sources that are *explicitly* disabled.
+            if not source.id or source.is_enabled is False:
+                continue
+            result.append({"id": source.id, "name": source.name or source.id})
         return result
 
     async def get_presets(self) -> List[Dict[str, Any]]:
@@ -180,6 +183,17 @@ class BeoClient:
 
     async def pause(self) -> bool:
         return await self._playback(PLAYBACK_PAUSE)
+
+    async def play_pause(self) -> bool:
+        """Toggle play/pause based on the device's *live* state."""
+        playing = False
+        try:
+            pb = await self._client.get_playback_state()
+            if pb and pb.state and pb.state.value:
+                playing = pb.state.value in PLAYING_STATES
+        except Exception as e:
+            _LOG.debug("Could not read playback state on %s: %s", self.name, e)
+        return await (self.pause() if playing else self.play())
 
     async def stop(self) -> bool:
         return await self._playback(PLAYBACK_STOP)
