@@ -9,7 +9,7 @@ import asyncio
 import base64
 import logging
 import ssl
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import aiohttp
 import certifi
@@ -65,7 +65,9 @@ class SpotifyClient:
             "user-read-currently-playing",
             "user-read-playback-state",
             "user-modify-playback-state",
-            "user-read-private"
+            "user-read-private",
+            "playlist-read-private",
+            "playlist-read-collaborative"
         ]
         
         params = {
@@ -209,13 +211,15 @@ class SpotifyClient:
             return None
     
     async def get_currently_playing(self) -> Optional[Dict[str, Any]]:
-        """Get the currently playing track from Spotify."""
-        data = await self._make_authenticated_request("GET", "/me/player/currently-playing")
-        
+        """Get the currently playing track and active device from Spotify."""
+        data = await self._make_authenticated_request("GET", "/me/player")
+
         if not data or not data.get("item"):
             return None
-        
+
         track = data["item"]
+        device = data.get("device", {})
+        context = data.get("context") or {}
         result = {
             "is_playing": data.get("is_playing", False),
             "title": track.get("name", "Unknown Title"),
@@ -224,11 +228,14 @@ class SpotifyClient:
             "duration_ms": track.get("duration_ms", 0),
             "progress_ms": data.get("progress_ms", 0),
             "image_url": None,
+            "device_name": device.get("name"),
+            "volume_percent": device.get("volume_percent"),
+            "context_uri": context.get("uri"),
         }
-        
+
         if track.get("album", {}).get("images"):
             result["image_url"] = track["album"]["images"][0]["url"]
-        
+
         return result
 
     async def get_playback_state(self) -> Optional[Dict[str, Any]]:
@@ -245,21 +252,111 @@ class SpotifyClient:
             "supports_volume": device.get("supports_volume", False),
         }
 
+    async def get_playlists(self) -> List[Dict[str, Any]]:
+        """Get the user's saved playlists (name + URI)."""
+        data = await self._make_authenticated_request("GET", "/me/playlists?limit=50")
+        if data is None:
+            _LOG.warning(
+                "Could not fetch playlists. If this integration was set up before playlist "
+                "support was added, re-run the integration setup to grant the new permissions."
+            )
+            return []
+
+        playlists = []
+        for item in data.get("items", []):
+            if item and item.get("uri"):
+                playlists.append({
+                    "name": item.get("name", "Unknown"),
+                    "uri": item["uri"],
+                    "id": item.get("id"),
+                })
+        return playlists
+
+    async def get_devices(self) -> List[Dict[str, Any]]:
+        """Get the available Spotify Connect devices."""
+        data = await self._make_authenticated_request("GET", "/me/player/devices")
+        if not data:
+            return []
+
+        devices = []
+        for device in data.get("devices", []):
+            devices.append({
+                "id": device.get("id"),
+                "name": device.get("name", "Unknown"),
+                "type": device.get("type", ""),
+                "is_active": device.get("is_active", False),
+                "supports_volume": device.get("supports_volume", False),
+                "volume_percent": device.get("volume_percent"),
+            })
+
+        # Remember device IDs so a speaker that drops out of the list (e.g. network
+        # standby) can still be targeted by name later.
+        self._config.cache_devices({d["name"]: d["id"] for d in devices if d["id"]})
+        return devices
+
+    async def resolve_target_device(self) -> Optional[str]:
+        """
+        Pick a device ID to target when starting playback.
+
+        Returns None when a device is already active (no explicit target needed)
+        or when no device could be found. Otherwise prefers the configured
+        default device, falling back to the first available device.
+        """
+        devices = await self.get_devices()
+
+        if any(d["is_active"] for d in devices):
+            return None
+
+        default_name = self._config.get_default_device()
+        if default_name:
+            for d in devices:
+                if default_name.lower() in d["name"].lower():
+                    return d["id"]
+            # Device not currently visible - try its last known ID, which can
+            # still reach devices in network standby.
+            for name, device_id in self._config.get_cached_devices().items():
+                if default_name.lower() in name.lower():
+                    _LOG.info("Default device '%s' not in device list, trying cached ID", name)
+                    return device_id
+
+        return devices[0]["id"] if devices else None
+
+    async def start_playback(self, context_uri: Optional[str] = None, device_id: Optional[str] = None) -> bool:
+        """Start playback, optionally of a context (playlist/album) on a specific device."""
+        endpoint = "/me/player/play"
+        if device_id:
+            endpoint += f"?device_id={device_id}"
+
+        kwargs = {}
+        if context_uri:
+            kwargs["json"] = {"context_uri": context_uri}
+
+        result = await self._make_authenticated_request("PUT", endpoint, **kwargs)
+        return result is not None
+
+    async def transfer_playback(self, device_id: str, play: bool = True) -> bool:
+        """Transfer playback to another Spotify Connect device."""
+        result = await self._make_authenticated_request(
+            "PUT", "/me/player", json={"device_ids": [device_id], "play": play}
+        )
+        return result is not None
+
     async def play_pause(self) -> bool:
         """Toggle play/pause state."""
         current_data = await self._make_authenticated_request("GET", "/me/player")
         if not current_data:
-            return False
-        
+            # No active device - try to start playback on the default/first available one
+            return await self.play()
+
         is_playing = current_data.get("is_playing", False)
         endpoint = "/me/player/pause" if is_playing else "/me/player/play"
         result = await self._make_authenticated_request("PUT", endpoint)
         return result is not None
-    
+
     async def play(self) -> bool:
-        """Start playback."""
-        result = await self._make_authenticated_request("PUT", "/me/player/play")
-        return result is not None
+        """Start playback, targeting a fallback device if none is active."""
+        device_id = await self.resolve_target_device()
+        return await self.start_playback(device_id=device_id)
     
     async def pause(self) -> bool:
         """Pause playback."""

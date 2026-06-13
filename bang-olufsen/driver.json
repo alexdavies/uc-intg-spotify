@@ -1,0 +1,37 @@
+{
+  "driver_id": "bang_olufsen",
+  "version": "0.1.0",
+  "min_core_api": "0.3.1",
+  "name": {
+    "en": "Bang & Olufsen (Mozart)"
+  },
+  "description": {
+    "en": "Local control of Bang & Olufsen Mozart speakers (Beosound Emerge, Balance, Level, A5, A9 5th gen, ...). Discovery, transport, volume, source and radio-favourite control, plus Beolink multiroom."
+  },
+  "developer": {
+    "name": "Meir Miyara"
+  },
+  "home_page": "https://github.com/mase1981/uc-intg-spotify",
+  "setup_data_schema": {
+    "title": {
+      "en": "Bang & Olufsen Setup"
+    },
+    "settings": [
+      {
+        "id": "info",
+        "label": {
+          "en": "Setup"
+        },
+        "field": {
+          "label": {
+            "value": {
+              "en": "This integration controls Bang & Olufsen 'Mozart' platform speakers on your local network (e.g. Beosound Emerge). Press Next to scan your network for speakers."
+            }
+          }
+        }
+      }
+    ]
+  },
+  "release_date": "2024-08-06",
+  "icon": "uc:speaker"
+}

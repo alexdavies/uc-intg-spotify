@@ -45,11 +45,16 @@ async def on_setup_complete():
         await api.set_device_state(ucapi.DeviceStates.ERROR)
         return
 
+    # Fetch playlists and devices so entities can expose them as sources/buttons
+    playlists = await spotify_client.get_playlists()
+    devices = await spotify_client.get_devices()
+    _LOG.info("Found %d playlists and %d devices", len(playlists), len(devices))
+
     # Create Media Player and Remote Entities
-    media_player = SpotifyMediaPlayer(api, spotify_client)
+    media_player = SpotifyMediaPlayer(api, spotify_client, playlists, devices)
     api.available_entities.add(media_player.entity)
-    
-    remote = SpotifyRemote(api, spotify_client)
+
+    remote = SpotifyRemote(api, spotify_client, playlists, devices)
     api.available_entities.add(remote.entity)
     
     _LOG.info("Entities created. Setting state to CONNECTED.")
