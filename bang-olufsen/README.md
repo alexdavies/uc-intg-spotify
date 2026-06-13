@@ -44,6 +44,21 @@ favourites and multiroom — none of which Spotify can do.
 3. Select the speaker(s) to add, or type an IP for any that didn't appear.
 4. Entities are created per speaker.
 
+## Testing against real hardware
+
+This package was built against the documented `mozart-api` and verified with
+mock tests, but not yet against a physical speaker. **[TESTING.md](TESTING.md)**
+is a staged runbook to verify it on your network, layer by layer, using the
+built-in diagnostics CLI:
+
+```bash
+python -m uc_intg_bang_olufsen.diagnostics selftest         # Stage 0 (no hardware)
+python -m uc_intg_bang_olufsen.diagnostics discover         # Stage 1: find the Emerge
+python -m uc_intg_bang_olufsen.diagnostics info <ip>        # Stage 2: read-only probe
+python -m uc_intg_bang_olufsen.diagnostics listen <ip>      # Stage 3: real-time push
+python -m uc_intg_bang_olufsen.diagnostics play <ip>        # Stage 4: commands
+```
+
 ## Development
 
 ```bash
