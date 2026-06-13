@@ -19,8 +19,7 @@ import ucapi
 
 from uc_intg_bang_olufsen.config import BeoConfig
 from uc_intg_bang_olufsen.factory import AnyBeoClient, create_client
-from uc_intg_bang_olufsen.media_player import BeoMediaPlayer
-from uc_intg_bang_olufsen.remote import BeoRemote
+from uc_intg_bang_olufsen.player import BeoPlayer
 from uc_intg_bang_olufsen.setup import BeoSetup
 
 logging.basicConfig(
@@ -34,55 +33,40 @@ loop = asyncio.get_event_loop()
 api: Optional[ucapi.IntegrationAPI] = None
 config: Optional[BeoConfig] = None
 
-# serial -> client / entities
 clients: Dict[str, AnyBeoClient] = {}
-media_players: Dict[str, BeoMediaPlayer] = {}
+player: Optional[BeoPlayer] = None
 
 
 async def on_setup_complete():
-    """Build clients and entities for every configured device."""
-    global clients, media_players
-    _LOG.info("Setup complete. Creating Bang & Olufsen entities...")
+    """Build the clients and the single unified player entity."""
+    global clients, player
+    _LOG.info("Setup complete. Creating unified Bang & Olufsen player...")
 
     devices = config.get_devices()
     if not devices:
         await api.set_device_state(ucapi.DeviceStates.ERROR)
         return
 
+    speakers = []
     for device in devices:
         serial = device.get("serial") or device.get("host")
-        if serial in clients:
-            continue
         client = create_client(
             device["host"], device.get("name"), serial,
             protocol=device.get("protocol", "mozart"),
         )
         clients[serial] = client
+        speakers.append({
+            "serial": serial,
+            "name": device.get("name") or serial,
+            "client": client,
+            "sources": await client.get_sources(),
+            "presets": await client.get_presets(),
+        })
 
-        sources = await client.get_sources()
-        presets = await client.get_presets()
-        peers = [
-            {"serial": d.get("serial") or d.get("host"), "name": d.get("name")}
-            for d in devices
-            if (d.get("serial") or d.get("host")) != serial
-        ]
-
-        media = BeoMediaPlayer(api, client, sources, presets)
-        media_players[serial] = media
-        api.available_entities.add(media.entity)
-
-        remote = BeoRemote(api, client, presets, peers, _resolve_peer_jid)
-        api.available_entities.add(remote.entity)
+    player = BeoPlayer(api, speakers, active_serial=config.get_active_speaker(), config=config)
+    api.available_entities.add(player.entity)
 
     await api.set_device_state(ucapi.DeviceStates.CONNECTED)
-
-
-async def _resolve_peer_jid(peer_serial: str) -> Optional[str]:
-    """Resolve a configured peer's Beolink JID for multiroom expansion."""
-    client = clients.get(peer_serial)
-    if client:
-        return await client.get_beolink_jid()
-    return None
 
 
 async def on_connect():
@@ -92,9 +76,8 @@ async def on_connect():
 
 async def on_subscribe_entities(entity_ids: List[str]):
     _LOG.info("Subscribed: %s", entity_ids)
-    for media in media_players.values():
-        if media.entity.id in entity_ids:
-            await media.initialize()
+    if player and player.entity.id in entity_ids:
+        await player.initialize()
 
 
 async def init_integration():

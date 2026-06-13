@@ -10,7 +10,7 @@ can recreate entities on restart without re-running discovery.
 
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 _LOG = logging.getLogger(__name__)
 
@@ -56,6 +56,14 @@ class BeoConfig:
             if key:
                 unique[key] = d
         self._data["devices"] = list(unique.values())
+        return self._save()
+
+    def get_active_speaker(self) -> Optional[str]:
+        """Serial of the last-selected output speaker, if any."""
+        return self._data.get("active_speaker")
+
+    def set_active_speaker(self, serial: str) -> bool:
+        self._data["active_speaker"] = serial
         return self._save()
 
     def reset(self) -> bool:

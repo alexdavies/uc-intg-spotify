@@ -78,7 +78,7 @@ async def cmd_selftest(_args) -> int:
 
     try:
         import ucapi  # noqa: F401
-        from uc_intg_bang_olufsen import client, config, discovery, media_player, remote, setup, driver  # noqa: F401
+        from uc_intg_bang_olufsen import client, config, discovery, player, setup, driver  # noqa: F401
         _ok("all integration modules import cleanly")
     except Exception as e:
         _fail(f"integration import error: {e}")
@@ -102,13 +102,16 @@ async def cmd_selftest(_args) -> int:
         api = MagicMock()
         c = BeoClient("0.0.0.0", "Test Speaker", "TEST")
         c._client = MagicMock()
-        from uc_intg_bang_olufsen.media_player import BeoMediaPlayer
-        from uc_intg_bang_olufsen.remote import BeoRemote
-        mp = BeoMediaPlayer(api, c, [{"id": "spotify", "name": "Spotify"}], [{"id": 1, "name": "Radio One"}])
-        rm = BeoRemote(api, c, [{"id": 1, "name": "Radio One"}], [], None)
-        assert "Radio: Radio One" in mp.entity.attributes["source_list"]
-        assert rm.entity.options["simple_commands"]
-        _ok("media player + remote entities construct and wire correctly")
+        from uc_intg_bang_olufsen.player import BeoPlayer
+        speakers = [{
+            "serial": "TEST", "name": "Test Speaker", "client": c,
+            "sources": [{"id": "spotify", "name": "Spotify"}],
+            "presets": [{"id": 1, "name": "Radio One"}],
+        }]
+        player = BeoPlayer(api, speakers)
+        assert "Radio: Radio One" in player.entity.attributes["source_list"]
+        assert player.entity.attributes["sound_mode_list"] == ["Test Speaker"]
+        _ok("unified player entity constructs and wires correctly")
     except Exception as e:
         _fail(f"entity construction error: {e}")
         failures += 1

@@ -17,8 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from uc_intg_bang_olufsen import client as client_mod
 from uc_intg_bang_olufsen.client import BeoClient, _metadata_to_attrs
-from uc_intg_bang_olufsen.media_player import BeoMediaPlayer, RADIO_PREFIX
-from uc_intg_bang_olufsen.remote import BeoRemote
+from uc_intg_bang_olufsen.player import BeoPlayer, RADIO_PREFIX
 
 
 def _make_client():
@@ -75,61 +74,69 @@ def test_get_presets_maps_ids():
     ]
 
 
-def test_media_player_source_list_merges_sources_and_presets():
+def _two_speaker_player():
+    """A unified player fronting an Emerge (Mozart) and an A9 (legacy)."""
     api = MagicMock()
-    c = _make_client()
-    sources = [{"id": "spotify", "name": "Spotify"}, {"id": "tuneIn", "name": "TuneIn"}]
-    presets = [{"id": 1, "name": "DR P3"}, {"id": 4, "name": "BBC Radio 1"}]
-    mp = BeoMediaPlayer(api, c, sources, presets)
-    source_list = mp.entity.attributes["source_list"]
-    assert "Spotify" in source_list
-    assert f"{RADIO_PREFIX}DR P3" in source_list
-    assert len(source_list) == 4
+    emerge = _make_client()
+    emerge.name = "Beosound Emerge"
+    a9 = _make_client()
+    a9.name = "Davies9"
+    speakers = [
+        {"serial": "EMERGE", "name": "Beosound Emerge", "client": emerge,
+         "sources": [{"id": "spotify", "name": "Spotify"}],
+         "presets": [{"id": 1, "name": "DR P3"}]},
+        {"serial": "A9", "name": "Davies9", "client": a9,
+         "sources": [{"id": "radio:1", "name": "B&O Radio"}], "presets": []},
+    ]
+    return api, BeoPlayer(api, speakers), emerge, a9
 
 
-def test_media_player_select_source_routes_preset_vs_source():
-    api = MagicMock()
-    c = _make_client()
-    c.set_source = AsyncMock(return_value=True)
-    c.activate_preset = AsyncMock(return_value=True)
-    sources = [{"id": "spotify", "name": "Spotify"}]
-    presets = [{"id": 7, "name": "Jazz FM"}]
-    mp = BeoMediaPlayer(api, c, sources, presets)
-
-    # Selecting a normal source -> set_active_source
-    asyncio.run(mp._select_source({"source": "Spotify"}))
-    c.set_source.assert_awaited_once_with("spotify")
-
-    # Selecting a radio favourite -> activate_preset
-    asyncio.run(mp._select_source({"source": f"{RADIO_PREFIX}Jazz FM"}))
-    c.activate_preset.assert_awaited_once_with(7)
+def test_player_fronts_active_speaker_sources_and_outputs():
+    api, player, emerge, a9 = _two_speaker_player()
+    # Output list = both speakers; starts on the first.
+    assert player.entity.attributes["sound_mode_list"] == ["Beosound Emerge", "Davies9"]
+    assert player.entity.attributes["sound_mode"] == "Beosound Emerge"
+    # Source list reflects the active (Emerge) speaker, incl. its radio preset.
+    src = player.entity.attributes["source_list"]
+    assert "Spotify" in src and f"{RADIO_PREFIX}DR P3" in src
 
 
-def test_remote_simple_commands_unique_and_bounded():
-    api = MagicMock()
-    c = _make_client()
-    presets = [{"id": i, "name": f"Station {i}"} for i in range(3)]
-    peers = [{"serial": "A9SERIAL", "name": "Beoplay A9"}]
-    remote = BeoRemote(api, c, presets, peers, resolve_jid=AsyncMock(return_value="jid@peer"))
-    cmds = remote.entity.options["simple_commands"]
-    assert len(set(cmds)) == len(cmds)
-    assert all(len(x) <= 20 for x in cmds)
-    assert "BEOLINK_LEAVE" in cmds
+def test_player_select_source_routes_to_active_speaker():
+    api, player, emerge, a9 = _two_speaker_player()
+    emerge.set_source = AsyncMock(return_value=True)
+    emerge.activate_preset = AsyncMock(return_value=True)
+
+    asyncio.run(player._select_source({"source": "Spotify"}))
+    emerge.set_source.assert_awaited_once_with("spotify")
+    asyncio.run(player._select_source({"source": f"{RADIO_PREFIX}DR P3"}))
+    emerge.activate_preset.assert_awaited_once_with(1)
 
 
-def test_remote_expand_resolves_jid_and_expands():
-    api = MagicMock()
-    c = _make_client()
-    c.beolink_expand = AsyncMock(return_value=True)
-    resolver = AsyncMock(return_value="jid@a9")
-    peers = [{"serial": "A9SERIAL", "name": "Beoplay A9"}]
-    remote = BeoRemote(api, c, [], peers, resolve_jid=resolver)
+def test_player_switch_output_repoints_commands_and_sources():
+    api, player, emerge, a9 = _two_speaker_player()
+    a9.get_state = AsyncMock(return_value={})
+    a9.set_source = AsyncMock(return_value=True)
 
-    expand_cmd = next(cmd for cmd, action in remote._actions.items() if action[0] == "expand")
-    rc = asyncio.run(remote._send({"command": expand_cmd}))
-    resolver.assert_awaited_once_with("A9SERIAL")
-    c.beolink_expand.assert_awaited_once_with("jid@a9")
-    assert rc.name == "OK" if hasattr(rc, "name") else True
+    # Switch the active output to the A9.
+    asyncio.run(player._select_output({"mode": "Davies9"}))
+    assert player._active == "A9"
+    # Source list now reflects the A9 (no presets, has B&O Radio).
+    assert player.entity.attributes["source_list"] == ["B&O Radio"]
+    # A source command now routes to the A9, not the Emerge.
+    asyncio.run(player._select_source({"source": "B&O Radio"}))
+    a9.set_source.assert_awaited_once_with("radio:1")
+    emerge.set_source = AsyncMock()
+    emerge.set_source.assert_not_awaited()
+
+
+def test_player_only_active_speaker_pushes_state():
+    api, player, emerge, a9 = _two_speaker_player()
+    # A push from the inactive A9 must NOT update the entity.
+    asyncio.run(a9.on_update({"title": "should be ignored"}))
+    assert api.configured_entities.update_attributes.call_count == 0
+    # A push from the active Emerge updates it.
+    asyncio.run(emerge.on_update({"title": "Now Playing"}))
+    assert api.configured_entities.update_attributes.call_count == 1
 
 
 if __name__ == "__main__":

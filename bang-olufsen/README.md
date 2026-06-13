@@ -31,17 +31,20 @@ favourites and multiroom — none of which Spotify can do.
 
 ## Features
 
+- **One unified media player** for all your speakers. The active output is
+  chosen with the player's sound-mode control (e.g. *Beosound Emerge* /
+  *Davies9*); the player mirrors that speaker's now-playing, volume and source
+  list and routes every command to it. (The speakers are used as either/or, so a
+  single interface is the natural model. "Both"/multiroom is a planned
+  follow-up.)
 - **Network discovery** of Mozart speakers via mDNS (`_bangolufsen._tcp`), plus
-  manual IP entry for speakers on another subnet.
-- **One media player + one remote entity per speaker.**
-- **Real-time state** (now playing, album art, volume, transport) pushed over the
-  Mozart notification WebSocket — no polling, no Spotify rate-limit concerns.
-- **Transport / volume / mute / source selection.**
-- **Radio favourites**: each speaker preset (the physical favourite buttons,
-  typically radio stations) is exposed both as a media-player source
-  (`Radio: ...`) and as a remote button / simple command (`RADIO_*`).
-- **Beolink multiroom**: "Play on <peer>" expands the current experience to
-  another configured speaker; "Leave multiroom" detaches.
+  manual IP entry for speakers that don't appear (e.g. an older Beoplay A9).
+- **Real-time state** (now playing, album art, volume, transport) pushed over
+  each speaker's notification stream — no polling.
+- **Transport / volume / mute / source selection** routed to the active output.
+- **Radio favourites**: on Mozart speakers each preset is exposed as a source
+  (`Radio: ...`). The Beoplay A9 4th gen has no Favorites API, so on it radio is
+  reached by selecting the "B&O Radio" source.
 
 ## Setup
 
