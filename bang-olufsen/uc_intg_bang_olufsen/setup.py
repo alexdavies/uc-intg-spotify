@@ -43,7 +43,18 @@ class BeoSetup:
         return ucapi.SetupError(ucapi.IntegrationSetupError.OTHER)
 
     async def _handle_driver_setup_request(self, msg: ucapi.DriverSetupRequest) -> ucapi.SetupAction:
+        # Spotify Client ID/Secret may be supplied on the initial form (driver.json).
+        setup_data = msg.setup_data or {}
+        client_id = (setup_data.get("spotify_client_id") or "").strip()
+        client_secret = (setup_data.get("spotify_client_secret") or "").strip()
+        if client_id and client_secret:
+            self._config.set_app_credentials(client_id, client_secret)
+
         if self._config.is_configured() and not msg.reconfigure:
+            # Already set up. If new Spotify creds were entered, go straight to
+            # authorization; otherwise finish without re-running discovery.
+            if client_id and client_secret:
+                return self._spotify_auth_screen()
             await self._setup_complete_callback()
             return ucapi.SetupComplete()
 
@@ -84,27 +95,7 @@ class BeoSetup:
             "label": {"en": "Add speaker by IP (optional)"},
             "field": {"text": {"value": "", "placeholder": "e.g. 192.168.1.42"}},
         })
-        # Optional Spotify playlists (cast to the speakers via Spotify Connect).
-        settings.append({
-            "id": "spotify_info",
-            "label": {"en": "Spotify playlists (optional)"},
-            "field": {"label": {"value": {"en": (
-                "To add a Spotify playlists page, enter your Spotify app's Client ID "
-                "and Secret (same app as the Spotify integration; redirect URI "
-                "https://example.com/callback). Leave blank to skip."
-            )}}},
-        })
-        settings.append({
-            "id": "spotify_client_id",
-            "label": {"en": "Spotify Client ID (optional)"},
-            "field": {"text": {"value": "", "placeholder": "Spotify app Client ID"}},
-        })
-        settings.append({
-            "id": "spotify_client_secret",
-            "label": {"en": "Spotify Client Secret (optional)"},
-            "field": {"text": {"value": "", "placeholder": "Spotify app Client Secret"}},
-        })
-
+        # Spotify creds come from the initial (driver.json) screen, captured above.
         return ucapi.RequestUserInput({"en": "Add Bang & Olufsen Speakers"}, settings)
 
     async def _handle_user_data_response(self, msg: ucapi.UserDataResponse) -> ucapi.SetupAction:
@@ -141,11 +132,10 @@ class BeoSetup:
         self._config.set_devices(merged)
         _LOG.info("Saved %d Bang & Olufsen device(s)", len(self._config.get_devices()))
 
-        # If Spotify credentials were supplied, continue to authorization.
-        client_id = (msg.input_values.get("spotify_client_id") or "").strip()
-        client_secret = (msg.input_values.get("spotify_client_secret") or "").strip()
-        if client_id and client_secret:
-            self._config.set_app_credentials(client_id, client_secret)
+        # If Spotify credentials were supplied (on the first screen) and we haven't
+        # authorized yet, continue to authorization.
+        if (self._config.get_client_id() and self._config.get_client_secret()
+                and not self._config.spotify_is_configured()):
             return self._spotify_auth_screen()
 
         await self._setup_complete_callback()

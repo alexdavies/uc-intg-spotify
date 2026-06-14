@@ -30,6 +30,41 @@
             }
           }
         }
+      },
+      {
+        "id": "spotify_info",
+        "label": {
+          "en": "Spotify playlists (optional)"
+        },
+        "field": {
+          "label": {
+            "value": {
+              "en": "Optional: to add a Spotify playlists page, enter your Spotify app's Client ID and Secret below (same app as the Spotify integration; redirect URI https://example.com/callback). You'll be asked to authorize next. Leave blank to skip."
+            }
+          }
+        }
+      },
+      {
+        "id": "spotify_client_id",
+        "label": {
+          "en": "Spotify Client ID (optional)"
+        },
+        "field": {
+          "text": {
+            "value": ""
+          }
+        }
+      },
+      {
+        "id": "spotify_client_secret",
+        "label": {
+          "en": "Spotify Client Secret (optional)"
+        },
+        "field": {
+          "text": {
+            "value": ""
+          }
+        }
       }
     ]
   },
