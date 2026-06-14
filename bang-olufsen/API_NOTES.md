@@ -228,9 +228,11 @@ Mozart `post_uri_source`).
 BBC notes: the old `as-hls-ww-live.akamaized.net/pool_904/...` URLs are **dead
 (HTTP 410)** — BBC rotates the pool number. Use the **`lsn.lv`** resolver
 (`https://lsn.lv/bbcradio.m3u8?station=<id>&bitrate=320000`), which returns a
-master playlist pointing at the *current* akamai pool; the `ww` (worldwide)
-variant played fine from Australia (not UK-geo-locked). Source for current BBC
-URLs: <https://garfnet.org.uk/cms/bbc-national-and-local-radio-hls-streams/>.
+master playlist pointing at the *current* akamai pool. Test location is **London
+(UK)**, so BBC is local and unrestricted; for a non-UK location add `&uk=0` /
+use the `ww` worldwide variant. `lsn.lv` also accepts `&uk=1` for the UK-only
+high-quality variant. Source for current BBC URLs:
+<https://garfnet.org.uk/cms/bbc-national-and-local-radio-hls-streams/>.
 
 ## Related fixes already committed (see git log)
 - Mozart: preset id (key not UUID), volume parsing (nested `.level`), `get_state`
