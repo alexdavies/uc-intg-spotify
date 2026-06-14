@@ -78,7 +78,7 @@ async def cmd_selftest(_args) -> int:
 
     try:
         import ucapi  # noqa: F401
-        from uc_intg_bang_olufsen import client, config, discovery, player, remote, setup, driver  # noqa: F401
+        from uc_intg_bang_olufsen import client, config, discovery, player, setup, driver  # noqa: F401
         _ok("all integration modules import cleanly")
     except Exception as e:
         _fail(f"integration import error: {e}")
@@ -103,15 +103,15 @@ async def cmd_selftest(_args) -> int:
         c = BeoClient("0.0.0.0", "Test Speaker", "TEST")
         c._client = MagicMock()
         from uc_intg_bang_olufsen.player import BeoPlayer
-        speakers = [{
+        speaker = {
             "serial": "TEST", "name": "Test Speaker", "client": c,
             "sources": [{"id": "spotify", "name": "Spotify"}],
             "presets": [{"id": 1, "name": "Radio One"}],
-        }]
-        player = BeoPlayer(api, speakers)
+        }
+        player = BeoPlayer(api, speaker)
         assert "Radio: Radio One" in player.entity.attributes["source_list"]
-        assert player.entity.attributes["sound_mode_list"] == ["Test Speaker"]
-        _ok("unified player entity constructs and wires correctly")
+        assert player.entity.id == "beo_player_TEST"
+        _ok("per-speaker player entity constructs and wires correctly")
     except Exception as e:
         _fail(f"entity construction error: {e}")
         failures += 1

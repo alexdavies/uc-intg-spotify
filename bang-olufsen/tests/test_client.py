@@ -86,105 +86,51 @@ def test_get_presets_maps_ids():
     ]
 
 
-def _two_speaker_player():
-    """A unified player fronting an Emerge (Mozart) and an A9 (legacy)."""
+def _player_for(name, serial, sources, presets):
+    """A single-speaker BeoPlayer with a mocked client and UC API."""
     api = MagicMock()
-    emerge = _make_client()
-    emerge.name = "Beosound Emerge"
-    a9 = _make_client()
-    a9.name = "Davies9"
-    speakers = [
-        {"serial": "EMERGE", "name": "Beosound Emerge", "client": emerge,
-         "sources": [{"id": "spotify", "name": "Spotify"}],
-         "presets": [{"id": 1, "name": "DR P3"}]},
-        {"serial": "A9", "name": "Davies9", "client": a9,
-         "sources": [{"id": "radio:1", "name": "B&O Radio"}], "presets": []},
-    ]
-    return api, BeoPlayer(api, speakers), emerge, a9
+    client = _make_client()
+    client.name = name
+    speaker = {"serial": serial, "name": name, "client": client,
+               "sources": sources, "presets": presets}
+    return api, BeoPlayer(api, speaker), client
 
 
-def test_player_fronts_active_speaker_sources_and_outputs():
-    api, player, emerge, a9 = _two_speaker_player()
-    # Output list = both speakers; starts on the first.
-    assert player.entity.attributes["sound_mode_list"] == ["Beosound Emerge", "Davies9"]
-    assert player.entity.attributes["sound_mode"] == "Beosound Emerge"
-    # Source list reflects the active (Emerge) speaker, incl. its radio preset.
+def test_player_exposes_own_sources_and_radio_presets():
+    api, player, client = _player_for(
+        "Beosound Emerge", "EMERGE",
+        [{"id": "spotify", "name": "Spotify"}], [{"id": 1, "name": "DR P3"}])
+    assert player.entity.id == "beo_player_EMERGE"
     src = player.entity.attributes["source_list"]
     assert "Spotify" in src and f"{RADIO_PREFIX}DR P3" in src
+    # Per-speaker player has no output/sound-mode selector.
+    assert "sound_mode_list" not in player.entity.attributes
 
 
-def test_player_select_source_routes_to_active_speaker():
-    api, player, emerge, a9 = _two_speaker_player()
-    emerge.set_source = AsyncMock(return_value=True)
-    emerge.activate_preset = AsyncMock(return_value=True)
+def test_player_select_source_routes_to_its_client():
+    api, player, client = _player_for(
+        "Beosound Emerge", "EMERGE",
+        [{"id": "spotify", "name": "Spotify"}], [{"id": 1, "name": "DR P3"}])
+    client.set_source = AsyncMock(return_value=True)
+    client.activate_preset = AsyncMock(return_value=True)
 
     asyncio.run(player._select_source({"source": "Spotify"}))
-    emerge.set_source.assert_awaited_once_with("spotify")
+    client.set_source.assert_awaited_once_with("spotify")
     asyncio.run(player._select_source({"source": f"{RADIO_PREFIX}DR P3"}))
-    emerge.activate_preset.assert_awaited_once_with(1)
+    client.activate_preset.assert_awaited_once_with(1)
 
 
-def test_player_switch_output_repoints_commands_and_sources():
-    api, player, emerge, a9 = _two_speaker_player()
-    a9.get_state = AsyncMock(return_value={})
-    a9.set_source = AsyncMock(return_value=True)
-
-    # Switch the active output to the A9.
-    asyncio.run(player._select_output({"mode": "Davies9"}))
-    assert player._active == "A9"
-    # Source list now reflects the A9 (no presets, has B&O Radio).
-    assert player.entity.attributes["source_list"] == ["B&O Radio"]
-    # A source command now routes to the A9, not the Emerge.
-    asyncio.run(player._select_source({"source": "B&O Radio"}))
-    a9.set_source.assert_awaited_once_with("radio:1")
-    emerge.set_source = AsyncMock()
-    emerge.set_source.assert_not_awaited()
+def test_player_push_updates_entity():
+    api, player, client = _player_for(
+        "Davies9", "A9", [{"id": "radio:1", "name": "B&O Radio"}], [])
+    # The client's push handler is wired to this player; a push updates the entity.
+    asyncio.run(client.on_update({"title": "Now Playing"}))
+    api.configured_entities.update_attributes.assert_called_once()
 
 
-def test_player_only_active_speaker_pushes_state():
-    api, player, emerge, a9 = _two_speaker_player()
-    # A push from the inactive A9 must NOT update the entity.
-    asyncio.run(a9.on_update({"title": "should be ignored"}))
-    assert api.configured_entities.update_attributes.call_count == 0
-    # A push from the active Emerge updates it.
-    asyncio.run(emerge.on_update({"title": "Now Playing"}))
-    assert api.configured_entities.update_attributes.call_count == 1
-
-
-def test_controls_remote_buttons_route_into_player():
-    from uc_intg_bang_olufsen.remote import BeoControlRemote
-    api, player, emerge, a9 = _two_speaker_player()
-    player.set_output = AsyncMock(return_value=True)
-    player.play_preset_on = AsyncMock(return_value=True)
-    speakers = [
-        {"serial": "EMERGE", "name": "Beosound Emerge", "presets": [{"id": 1, "name": "DR P3"}]},
-        {"serial": "A9", "name": "Davies9", "presets": []},
-    ]
-    remote = BeoControlRemote(api, player, speakers)
-
-    cmds = remote.entity.options["simple_commands"]
-    assert len(set(cmds)) == len(cmds)
-    assert all(len(c) <= 20 for c in cmds)
-
-    # An output button switches the active speaker.
-    out_cmd = next(c for c, name in remote._output_cmds.items() if name == "Davies9")
-    asyncio.run(remote._send({"command": out_cmd}))
-    player.set_output.assert_awaited_once_with("Davies9")
-
-    # A radio button plays that preset on its owning speaker.
-    radio_cmd = next(iter(remote._radio_cmds))
-    asyncio.run(remote._send({"command": radio_cmd}))
-    player.play_preset_on.assert_awaited_once_with("EMERGE", 1)
-
-
-def test_controls_remote_transport_routes_to_active_client():
-    from uc_intg_bang_olufsen.remote import BeoControlRemote
-    api, player, emerge, a9 = _two_speaker_player()
-    emerge.play_pause = AsyncMock(return_value=True)
-    speakers = [{"serial": "EMERGE", "name": "Beosound Emerge", "presets": []}]
-    remote = BeoControlRemote(api, player, speakers)
-    asyncio.run(remote._send({"command": "PLAY_PAUSE"}))
-    emerge.play_pause.assert_awaited_once()
+def test_player_entity_id_is_sanitised():
+    api, player, client = _player_for("X", "3071.1200530@products", [], [])
+    assert player.entity.id == "beo_player_3071_1200530_products"
 
 
 if __name__ == "__main__":

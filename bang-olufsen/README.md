@@ -31,26 +31,21 @@ favourites and multiroom — none of which Spotify can do.
 
 ## Features
 
-- **One unified media player** for all your speakers. The active output is
-  chosen with the player's sound-mode control (e.g. *Beosound Emerge* /
-  *Davies9*); the player mirrors that speaker's now-playing, volume and source
-  list and routes every command to it. (The speakers are used as either/or, so a
-  single interface is the natural model. "Both"/multiroom is a planned
-  follow-up.)
-- **Network discovery** of Mozart speakers via mDNS (`_bangolufsen._tcp`), plus
-  manual IP entry for speakers that don't appear (e.g. an older Beoplay A9).
+- **One media player per speaker.** Each configured speaker becomes its own
+  independent media-player entity (e.g. *Alex's Emerge*, *Davies9*) showing that
+  speaker's own now-playing, volume and source list. Because the two platforms
+  (Mozart vs legacy) genuinely differ, one entity each keeps the live state of
+  every speaker unambiguous.
+- **Network discovery** of both Mozart (`_bangolufsen._tcp`) and legacy
+  (`_beoremote._tcp`) speakers via mDNS, so older models like the Beoplay A9
+  appear already named; plus manual IP entry as a fallback.
 - **Real-time state** (now playing, album art, volume, transport) pushed over
   each speaker's notification stream — no polling.
-- **Transport / volume / mute / source selection** routed to the active output.
+- **Transport / volume / mute / source selection** per speaker.
 - **Radio favourites**: on Mozart speakers each preset is exposed as a source
   (`Radio: ...`). The Beoplay A9 4th gen has no Favorites API, so on it radio is
-  reached by selecting the "B&O Radio" source.
-- **A companion "Bang & Olufsen Controls" remote** with explicit tappable pages —
-  *Speakers* (pick the output), *Radio* (one button per favourite), and
-  *Controls* (transport/volume) — since the media player's built-in
-  source/sound-mode selectors are not very discoverable. The buttons route into
-  the same player, so both entities stay in sync, and are available as simple
-  commands for activities/macros.
+  reached by selecting the "B&O Radio" source. (Direct station tuning on the A9
+  isn't possible over its local API — see `API_NOTES.md`.)
 
 ## Setup
 

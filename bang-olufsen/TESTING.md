@@ -95,7 +95,7 @@ python -u uc_intg_bang_olufsen/driver.py
 ```
 
 Then add the integration on the Remote, run setup (it scans and lists the
-Emerge), and confirm the media-player and remote entities appear and work.
+Emerge), and confirm one media-player entity per speaker appears and works.
 
 ## Phase 2 prep — identify the Beoplay A9's protocol
 
