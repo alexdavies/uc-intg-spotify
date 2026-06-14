@@ -42,10 +42,20 @@ def test_metadata_translation():
 
 def test_volume_scaling():
     c = _make_client()
-    # Device reports a max of 90; UC works in 0-100.
-    attrs = c._volume_to_attrs(SimpleNamespace(maximum=90, level=45, muted=False))
+    # Mozart nests each value in a wrapper: VolumeState.level is a VolumeLevel
+    # (int under ``.level``), .maximum a VolumeMaximum (also ``.level``), and
+    # .muted a Muted (bool under ``.muted``). Device reports a max of 90.
+    volume_state = SimpleNamespace(
+        maximum=SimpleNamespace(level=90),
+        level=SimpleNamespace(level=45),
+        muted=SimpleNamespace(muted=False),
+    )
+    attrs = c._volume_to_attrs(volume_state)
     assert attrs["volume"] == 50  # 45/90 -> 50%
     assert attrs["muted"] is False
+    # The wrapper must be unwrapped to an int, not stored as the object, or the
+    # next set_volume() arithmetic breaks.
+    assert c._volume_maximum == 90
 
     c._client.set_current_volume_level = AsyncMock()
     asyncio.run(c.set_volume(100))
@@ -62,9 +72,11 @@ def test_activate_preset_calls_library():
 
 def test_get_presets_maps_ids():
     c = _make_client()
+    # The dict key is the integer preset number activate_preset() expects;
+    # ``id`` is an unrelated UUID that must NOT be used as the id.
     presets = {
-        "1": SimpleNamespace(id=1, title="DR P3", name=None),
-        "4": SimpleNamespace(id=4, title=None, name="BBC Radio 1"),
+        "1": SimpleNamespace(id="1b174cc6-uuid", title="DR P3", name="Preset1"),
+        "4": SimpleNamespace(id="4816d6d3-uuid", title=None, name="BBC Radio 1"),
     }
     c._client.get_presets = AsyncMock(return_value=presets)
     result = asyncio.run(c.get_presets())
