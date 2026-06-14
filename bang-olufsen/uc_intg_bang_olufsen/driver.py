@@ -23,6 +23,7 @@ from uc_intg_bang_olufsen.factory import AnyBeoClient, create_client
 from uc_intg_bang_olufsen.player import BeoPlayer
 from uc_intg_bang_olufsen.remote import BeoRemote
 from uc_intg_bang_olufsen.setup import BeoSetup
+from uc_intg_bang_olufsen.spotify import SpotifyClient
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,11 +38,12 @@ config: Optional[BeoConfig] = None
 
 clients: Dict[str, AnyBeoClient] = {}
 players: Dict[str, BeoPlayer] = {}  # entity id -> player
+spotify: Optional[SpotifyClient] = None
 
 
 async def on_setup_complete():
     """Build the clients and one media-player entity per configured speaker."""
-    global clients, players
+    global clients, players, spotify
     _LOG.info("Setup complete. Creating one Bang & Olufsen player per speaker...")
 
     devices = config.get_devices()
@@ -52,6 +54,15 @@ async def on_setup_complete():
     clients = {}
     players = {}
     radio_stations = config.get_radio_stations()
+
+    # Optional Spotify playlists (cast to speakers via Spotify Connect).
+    spotify = None
+    playlists: List[dict] = []
+    if config.spotify_is_configured():
+        spotify = SpotifyClient(config)
+        playlists = await spotify.get_playlists(config.get_playlist_limit())
+        _LOG.info("Spotify enabled: %d playlist(s)", len(playlists))
+
     for device in devices:
         serial = device.get("serial") or device.get("host")
         client = create_client(
@@ -65,12 +76,12 @@ async def on_setup_complete():
             "client": client,
             "sources": await client.get_sources(),
         }
-        player = BeoPlayer(api, speaker, radio_stations)
+        player = BeoPlayer(api, speaker, radio_stations, spotify)
         players[player.entity.id] = player
         api.available_entities.add(player.entity)
 
-        # Companion "control" surface (transport + radio buttons) for this speaker.
-        remote = BeoRemote(api, player, speaker["name"], serial, radio_stations)
+        # Companion "control" surface (transport + radio + Spotify) for this speaker.
+        remote = BeoRemote(api, player, speaker["name"], serial, radio_stations, playlists)
         api.available_entities.add(remote.entity)
 
     await api.set_device_state(ucapi.DeviceStates.CONNECTED)
@@ -122,6 +133,8 @@ def shutdown_handler(signum, frame):
             player.close()
         for client in clients.values():
             await client.close()
+        if spotify:
+            await spotify.close()
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
         for task in tasks:
             task.cancel()

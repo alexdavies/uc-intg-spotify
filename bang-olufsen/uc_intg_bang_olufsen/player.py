@@ -30,16 +30,19 @@ class BeoPlayer:
     """One media player entity for a single speaker."""
 
     def __init__(self, api: ucapi.IntegrationAPI, speaker: Dict[str, Any],
-                 radio_stations: Optional[List[Dict[str, str]]] = None):
+                 radio_stations: Optional[List[Dict[str, str]]] = None,
+                 spotify=None):
         """
         Args:
             speaker: {serial, name, client, sources}.
             radio_stations: custom cast radio list [{name, url, content_type}].
+            spotify: optional shared SpotifyClient for playlist playback.
         """
         self._api = api
         self._client = speaker["client"]
         self._serial = speaker["serial"]
         self._name = speaker.get("name") or self._serial
+        self._spotify = spotify
 
         # Native input sources (Spotify, Line-In, ...): name -> id.
         self._source_ids: Dict[str, str] = {
@@ -143,6 +146,29 @@ class BeoPlayer:
             return _status(ok)
         _LOG.warning("[%s] unknown source '%s'", self._name, source)
         return ucapi.StatusCodes.BAD_REQUEST
+
+    async def play_spotify_playlist(self, uri: str, name: str = "") -> bool:
+        """Start a Spotify playlist on this speaker via Spotify Connect."""
+        if not self._spotify:
+            return False
+        # Wake this speaker's Spotify source so it registers as a Connect device.
+        spotify_src = self._source_ids.get("Spotify Connect") or self._source_ids.get("Spotify")
+        if spotify_src:
+            await self._client.set_source(spotify_src)
+            await asyncio.sleep(1.5)
+        device_id = await self._spotify.resolve_device_id(self._name)
+        if not device_id:
+            _LOG.error("[%s] no matching Spotify Connect device found", self._name)
+            return False
+        ok = await self._spotify.start_playlist(uri, device_id)
+        if ok:
+            self._update({
+                Attributes.SOURCE: "Spotify Connect" if "Spotify Connect" in self._source_ids else "Spotify",
+                Attributes.MEDIA_TITLE: name,
+                Attributes.MEDIA_IMAGE_URL: "",
+                Attributes.STATE: States.PLAYING,
+            })
+        return ok
 
     async def _cast_station(self, station: Dict[str, str]) -> bool:
         """Cast a radio stream URL to this speaker's Chromecast (off the loop)."""

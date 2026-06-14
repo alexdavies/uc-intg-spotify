@@ -53,7 +53,8 @@ class BeoRemote:
     """Button-page remote for a single speaker, delegating to its BeoPlayer."""
 
     def __init__(self, api: ucapi.IntegrationAPI, player, name: str, serial: str,
-                 radio_stations: Optional[List[Dict[str, str]]] = None):
+                 radio_stations: Optional[List[Dict[str, str]]] = None,
+                 playlists: Optional[List[Dict[str, str]]] = None):
         self._api = api
         self._player = player
         self._name = name
@@ -70,6 +71,15 @@ class BeoRemote:
             self._radio_buttons.append((c, station["name"]))
             simple_commands.append(c)
 
+        # Spotify playlist buttons -> command : (uri, name).
+        self._playlist_cmds: Dict[str, tuple] = {}
+        self._playlist_buttons: List[tuple] = []
+        for pl in (playlists or []):
+            c = _cmd(pl["name"], "SPOT", existing)
+            self._playlist_cmds[c] = (pl["uri"], pl["name"])
+            self._playlist_buttons.append((c, pl["name"]))
+            simple_commands.append(c)
+
         self.entity = ucapi.Remote(
             identifier="beo_remote_" + _entity_id(serial)[len("beo_player_"):],
             name={"en": f"{name} Controls"},
@@ -79,8 +89,8 @@ class BeoRemote:
             ui_pages=self._pages(),
             cmd_handler=self.cmd_handler,
         )
-        _LOG.info("Created B&O remote '%s Controls' (%d radio buttons)",
-                  name, len(self._radio_buttons))
+        _LOG.info("Created B&O remote '%s Controls' (%d radio, %d playlist buttons)",
+                  name, len(self._radio_buttons), len(self._playlist_buttons))
 
     def _pages(self) -> List[UiPage]:
         controls = UiPage(page_id="controls", name="Controls", grid=Size(4, 6))
@@ -92,6 +102,7 @@ class BeoRemote:
         controls.add(create_ui_icon("uc:volume-low", 2, 3, Size(1, 1), "VOLUME_DOWN"))
         pages = [controls]
         pages.extend(_button_pages(self._radio_buttons, "radio", "Radio"))
+        pages.extend(_button_pages(self._playlist_buttons, "spotify", "Spotify"))
         return pages
 
     async def cmd_handler(self, entity, cmd_id: str, params: dict[str, Any] | None) -> ucapi.StatusCodes:
@@ -122,6 +133,10 @@ class BeoRemote:
                 self._player.entity, MpCommands.SELECT_SOURCE,
                 {"source": self._radio_cmds[command]},
             )
+        if command in self._playlist_cmds:
+            uri, plname = self._playlist_cmds[command]
+            ok = await self._player.play_spotify_playlist(uri, plname)
+            return ucapi.StatusCodes.OK if ok else ucapi.StatusCodes.SERVER_ERROR
         if command in _TRANSPORT:
             return await self._player.cmd_handler(self._player.entity, _TRANSPORT[command], None)
         _LOG.warning("[%s] unknown remote command: %s", self._name, command)

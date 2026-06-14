@@ -147,6 +147,35 @@ def test_player_entity_id_is_sanitised():
     assert player.entity.id == "beo_player_3071_1200530_products"
 
 
+def test_player_play_spotify_playlist():
+    spot = MagicMock()
+    spot.resolve_device_id = AsyncMock(return_value="dev123")
+    spot.start_playlist = AsyncMock(return_value=True)
+    api = MagicMock()
+    client = _make_client()
+    client.name = "Davies9"
+    speaker = {"serial": "A9", "name": "Davies9", "client": client, "sources": []}
+    player = BeoPlayer(api, speaker, [], spot)
+
+    ok = asyncio.run(player.play_spotify_playlist("spotify:playlist:1", "Chill"))
+    assert ok is True
+    spot.resolve_device_id.assert_awaited_once_with("Davies9")
+    spot.start_playlist.assert_awaited_once_with("spotify:playlist:1", "dev123")
+    assert player.entity.attributes["media_title"] == "Chill"
+
+
+def test_remote_playlist_button_plays_spotify():
+    from uc_intg_bang_olufsen.remote import BeoRemote
+    api, player, client = _player_for("Davies9", "A9", [])
+    player.play_spotify_playlist = AsyncMock(return_value=True)
+    remote = BeoRemote(api, player, "Davies9", "A9", [],
+                       [{"name": "Chill", "uri": "spotify:playlist:1"}])
+    cmd = next(iter(remote._playlist_cmds))
+    rc = asyncio.run(remote._send({"command": cmd}))
+    player.play_spotify_playlist.assert_awaited_once_with("spotify:playlist:1", "Chill")
+    assert rc == ucapi.StatusCodes.OK
+
+
 def test_remote_buttons_delegate_to_player():
     from ucapi.media_player import Commands as MpCommands
     from uc_intg_bang_olufsen.remote import BeoRemote

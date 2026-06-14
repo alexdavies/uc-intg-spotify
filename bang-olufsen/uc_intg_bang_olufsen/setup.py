@@ -19,6 +19,7 @@ import ucapi
 from uc_intg_bang_olufsen.config import BeoConfig
 from uc_intg_bang_olufsen.discovery import discover_devices
 from uc_intg_bang_olufsen.factory import PROTOCOL_MOZART, detect_protocol
+from uc_intg_bang_olufsen.spotify import SpotifyClient
 
 _LOG = logging.getLogger(__name__)
 
@@ -83,10 +84,34 @@ class BeoSetup:
             "label": {"en": "Add speaker by IP (optional)"},
             "field": {"text": {"value": "", "placeholder": "e.g. 192.168.1.42"}},
         })
+        # Optional Spotify playlists (cast to the speakers via Spotify Connect).
+        settings.append({
+            "id": "spotify_info",
+            "label": {"en": "Spotify playlists (optional)"},
+            "field": {"label": {"value": {"en": (
+                "To add a Spotify playlists page, enter your Spotify app's Client ID "
+                "and Secret (same app as the Spotify integration; redirect URI "
+                "https://example.com/callback). Leave blank to skip."
+            )}}},
+        })
+        settings.append({
+            "id": "spotify_client_id",
+            "label": {"en": "Spotify Client ID (optional)"},
+            "field": {"text": {"value": "", "placeholder": "Spotify app Client ID"}},
+        })
+        settings.append({
+            "id": "spotify_client_secret",
+            "label": {"en": "Spotify Client Secret (optional)"},
+            "field": {"text": {"value": "", "placeholder": "Spotify app Client Secret"}},
+        })
 
         return ucapi.RequestUserInput({"en": "Add Bang & Olufsen Speakers"}, settings)
 
     async def _handle_user_data_response(self, msg: ucapi.UserDataResponse) -> ucapi.SetupAction:
+        # Second step: Spotify authorization code submitted.
+        if "auth_code" in msg.input_values:
+            return await self._handle_spotify_auth(msg)
+
         devices: List[dict] = []
 
         selected = msg.input_values.get("selected")
@@ -116,6 +141,49 @@ class BeoSetup:
         self._config.set_devices(merged)
         _LOG.info("Saved %d Bang & Olufsen device(s)", len(self._config.get_devices()))
 
+        # If Spotify credentials were supplied, continue to authorization.
+        client_id = (msg.input_values.get("spotify_client_id") or "").strip()
+        client_secret = (msg.input_values.get("spotify_client_secret") or "").strip()
+        if client_id and client_secret:
+            self._config.set_app_credentials(client_id, client_secret)
+            return self._spotify_auth_screen()
+
+        await self._setup_complete_callback()
+        return ucapi.SetupComplete()
+
+    def _spotify_auth_screen(self) -> ucapi.SetupAction:
+        try:
+            auth_url = SpotifyClient(self._config).get_authorization_url()
+        except ValueError as e:
+            _LOG.error("Spotify auth URL error: %s", e)
+            return ucapi.SetupError(ucapi.IntegrationSetupError.OTHER)
+        return ucapi.RequestUserInput(
+            {"en": "Spotify Authorization"},
+            [
+                {"id": "spotify_steps", "label": {"en": "Steps"}, "field": {"label": {"value": {"en": (
+                    "1. Open the URL below and log in / authorize.\n"
+                    "2. Your browser will show a 'page not found' at example.com — that's fine.\n"
+                    "3. Copy the 'code=...' value (or the whole URL) and paste it below."
+                )}}}},
+                {"id": "spotify_url", "label": {"en": "Authorization URL"},
+                 "field": {"text": {"value": auth_url, "read_only": True}}},
+                {"id": "auth_code", "label": {"en": "Paste code or full URL"},
+                 "field": {"text": {"value": "", "placeholder": "code=... or the whole redirected URL"}}},
+            ],
+        )
+
+    async def _handle_spotify_auth(self, msg: ucapi.UserDataResponse) -> ucapi.SetupAction:
+        auth_input = (msg.input_values.get("auth_code") or "").strip()
+        if not auth_input:
+            return ucapi.SetupError(ucapi.IntegrationSetupError.OTHER)
+        code = auth_input
+        if "code=" in auth_input:
+            code = auth_input.split("code=", 1)[1].split("&")[0]
+        ok = await SpotifyClient(self._config).exchange_code_for_token(code)
+        if not ok:
+            _LOG.error("Spotify token exchange failed")
+            return ucapi.SetupError(ucapi.IntegrationSetupError.AUTHORIZATION_ERROR)
+        _LOG.info("Spotify authorized for the B&O integration")
         await self._setup_complete_callback()
         return ucapi.SetupComplete()
 
