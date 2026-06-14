@@ -140,17 +140,37 @@ favourites. This is the key to cross-device radio.
 
 ---
 
-## How the B&O app likely tunes stations (the "privileged API" question)
-B&O Radio (the airable-based service that **replaced TuneIn** — see B&O support)
-appears to be **cloud-driven**: the local ASE REST API only *reads* favourites and
-does transport/resume, with no local "tune to station X" endpoint. Station
-selection in the app most likely goes through the airable / B&O cloud tied to the
-account, then is pushed to the speaker. Corroboration: the community wrappers
-[`martonborzak/ha-beoplay`](https://github.com/martonborzak/ha-beoplay) /
-[`pybeoplay`](https://pypi.org/project/pybeoplay/) and `giachello/beoplay` also
-implement only source-switch + transport, **not** station select. The A9 4th gen
-additionally has Google Assistant + Chromecast, so "play triple j" by voice and
-casting are first-class.
+## B&O Radio = airable (not TuneIn), and how the app tunes stations
+
+**The "B&O Radio" stations are [airable](https://www.airablenow.com/) stations,
+not TuneIn.** Confirmed:
+- All artwork is served from `static.airable.io`.
+- B&O Radio **replaced** TuneIn (B&O support); airable is B&O's radio catalog
+  backend (B&O is an airable customer, via Frontier Silicon). airable and TuneIn
+  are competing aggregators with **separate catalogs and id namespaces** — which
+  is exactly why feeding airable/B&O-Radio ids to the (old, now-disabled) TuneIn
+  source hangs in "preparing".
+- The airable station id is **identical across platforms**: on Mozart it's
+  `playback.metadata.sourceInternalId` (e.g. BBC Radio 2 = `2972408424131572`);
+  on the A9 it's the favourite's `station.id` — same number.
+
+**How the app plays a station:** it browses airable's catalog (via B&O's airable
+partner endpoint) and the device resolves the airable id to a live stream through
+**airable's cloud**, then streams it natively. This is *not* Chromecast and *not*
+a local "tune" endpoint — it's a cloud-backed catalog. That's why there's no
+local station-select API and why the community wrappers
+([`ha-beoplay`](https://github.com/martonborzak/ha-beoplay) /
+[`pybeoplay`](https://pypi.org/project/pybeoplay/), `giachello/beoplay`) only do
+source-switch + transport.
+
+**Can we get the actual stream URL?** The device never exposes it — only the
+airable id + artwork. airable's catalog *does* contain the stream links ("multiple
+links per station"), but the **airable API is partner-gated** (needs B&O's
+namespace/credentials), so we can't cleanly resolve an airable id → URL.
+(`rhaamo/pyrable` is a community airable-compatible server, i.e. the API shape is
+partly known, but relying on it is fragile/grey-area.) Practical path: hand-curate
+a real stream URL per station — most big stations publish their own public streams
+anyway (BBC, ABC/triple j, etc.).
 
 ## The viable instant, cross-device path: Chromecast
 Both speakers advertise `_googlecast._tcp` ("Alex's Emerge", "Davies9"). Casting a
