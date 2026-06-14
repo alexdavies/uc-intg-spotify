@@ -128,6 +128,15 @@ class BeoPlayer:
     def _source_list(self, serial: str) -> List[str]:
         return list(self._source_ids[serial]) + list(self._preset_ids[serial])
 
+    def _source_display(self, source_name: str) -> str:
+        """Prefix the active speaker so the card always names what it controls.
+
+        A remote page can't show the active output, so surfacing it here (e.g.
+        "Davies9 · B&O Radio") gives one always-visible indication of which
+        speaker the controls are acting on.
+        """
+        return f"{self._active_name} · {source_name}" if source_name else ""
+
     def _make_handler(self, serial: str):
         async def handler(attrs: Dict[str, Any]):
             if serial == self._active:
@@ -213,7 +222,7 @@ class BeoPlayer:
             _LOG.warning("Unknown source '%s' on %s", source, self._active_name)
             return ucapi.StatusCodes.BAD_REQUEST
         if ok:
-            self._update({Attributes.SOURCE: source})
+            self._update({Attributes.SOURCE: self._source_display(source)})
         return _status(ok)
 
     async def _mute_toggle(self) -> bool:
@@ -255,7 +264,7 @@ class BeoPlayer:
         if "image_url" in attrs:
             mapped[Attributes.MEDIA_IMAGE_URL] = attrs["image_url"]
         if attrs.get("source_name"):
-            mapped[Attributes.SOURCE] = attrs["source_name"]
+            mapped[Attributes.SOURCE] = self._source_display(attrs["source_name"])
         self._update(mapped)
 
     def _update(self, attrs: Dict[str, Any]) -> None:

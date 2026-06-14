@@ -56,7 +56,9 @@ class BeoControlRemote:
         for s in speakers:
             c = _cmd(s["name"], "OUT", existing)
             self._output_cmds[c] = s["name"]
-            self._output_buttons.append((c, s["name"]))
+            # Imperative label: a remote page can't show which speaker is active,
+            # so make each button an unambiguous action.
+            self._output_buttons.append((c, f"Switch to {s['name']}"))
             simple_commands.append(c)
 
         # Radio preset buttons -> command : (serial, preset_id)
@@ -93,8 +95,10 @@ class BeoControlRemote:
         controls.add(create_ui_icon("uc:volume-low", 2, 3, Size(1, 1), "VOLUME_DOWN"))
         pages.append(controls)
 
-        pages.extend(_button_pages(self._output_buttons, "speakers", "Speakers"))
+        # Transport first (used constantly), then Radio, then speaker-switching
+        # last (one speaker is primary, so switching is occasional).
         pages.extend(_button_pages(self._radio_buttons, "radio", "Radio"))
+        pages.extend(_button_pages(self._output_buttons, "speakers", "Switch speaker"))
         return pages
 
     async def cmd_handler(self, entity, cmd_id: str, params: dict[str, Any] | None) -> ucapi.StatusCodes:
