@@ -122,15 +122,27 @@ class BeoPlayer:
             return ucapi.StatusCodes.BAD_REQUEST
         source = params["source"]
         if source in self._radio:
-            ok = await self._cast_station(self._radio[source])
-        elif source in self._source_ids:
+            station = self._radio[source]
+            ok = await self._cast_station(station)
+            if ok:
+                # The cast carries no metadata back via the speaker's push, so
+                # set the now-playing card (station name + logo) ourselves.
+                self._update({
+                    Attributes.SOURCE: source,
+                    Attributes.MEDIA_TITLE: station["name"],
+                    Attributes.MEDIA_ARTIST: "",
+                    Attributes.MEDIA_ALBUM: "",
+                    Attributes.MEDIA_IMAGE_URL: station.get("image", ""),
+                    Attributes.STATE: States.PLAYING,
+                })
+            return _status(ok)
+        if source in self._source_ids:
             ok = await self._client.set_source(self._source_ids[source])
-        else:
-            _LOG.warning("[%s] unknown source '%s'", self._name, source)
-            return ucapi.StatusCodes.BAD_REQUEST
-        if ok:
-            self._update({Attributes.SOURCE: source})
-        return _status(ok)
+            if ok:
+                self._update({Attributes.SOURCE: source})
+            return _status(ok)
+        _LOG.warning("[%s] unknown source '%s'", self._name, source)
+        return ucapi.StatusCodes.BAD_REQUEST
 
     async def _cast_station(self, station: Dict[str, str]) -> bool:
         """Cast a radio stream URL to this speaker's Chromecast (off the loop)."""
@@ -138,7 +150,8 @@ class BeoPlayer:
         try:
             return await loop.run_in_executor(
                 None, self._cast.play_sync,
-                station["url"], station.get("content_type", "audio/mpeg"), station["name"],
+                station["url"], station.get("content_type", "audio/mpeg"),
+                station["name"], station.get("image"),
             )
         except Exception as e:  # noqa: BLE001
             _LOG.error("[%s] cast of %r failed: %s", self._name, station.get("name"), e)

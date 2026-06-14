@@ -119,13 +119,19 @@ def test_player_select_native_source_routes_to_client():
 def test_player_select_radio_casts_stream_url():
     api, player, client = _player_for(
         "Davies9", "A9", [],
-        [{"name": "triple j", "url": "http://x/aac", "content_type": "audio/aac"}])
+        [{"name": "triple j", "url": "http://x/aac", "content_type": "audio/aac",
+          "image": "http://img/tj.png"}])
     # Casting is delegated to BeoCast.play_sync (run in an executor).
     player._cast.play_sync = MagicMock(return_value=True)
     rc = asyncio.run(player._select_source({"source": f"{RADIO_PREFIX}triple j"}))
-    player._cast.play_sync.assert_called_once_with("http://x/aac", "audio/aac", "triple j")
+    player._cast.play_sync.assert_called_once_with(
+        "http://x/aac", "audio/aac", "triple j", "http://img/tj.png")
     assert rc == ucapi.StatusCodes.OK
-    assert player.entity.attributes["source"] == f"{RADIO_PREFIX}triple j"
+    # The now-playing card is set from the station (push carries no cast metadata).
+    attrs = player.entity.attributes
+    assert attrs["source"] == f"{RADIO_PREFIX}triple j"
+    assert attrs["media_title"] == "triple j"
+    assert attrs["media_image_url"] == "http://img/tj.png"
 
 
 def test_player_push_updates_entity():

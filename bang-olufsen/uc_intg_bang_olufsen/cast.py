@@ -74,12 +74,14 @@ class BeoCast:
                 pass
             self._browser = None
 
-    def play_sync(self, url: str, content_type: str, title: str) -> bool:
+    def play_sync(self, url: str, content_type: str, title: str,
+                  image: Optional[str] = None) -> bool:
         """Cast a stream URL and return whether it reached an active/playing state."""
         with self._lock:
             cast = self._connect()
             mc = cast.media_controller
-            mc.play_media(url, content_type, title=title, stream_type="LIVE")
+            mc.play_media(url, content_type, title=title, stream_type="LIVE",
+                          images=[image] if image else None)
             try:
                 mc.block_until_active(timeout=10)
             except Exception:  # noqa: BLE001 - fall through to the status poll
