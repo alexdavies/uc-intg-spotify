@@ -139,5 +139,41 @@ def test_player_only_active_speaker_pushes_state():
     assert api.configured_entities.update_attributes.call_count == 1
 
 
+def test_controls_remote_buttons_route_into_player():
+    from uc_intg_bang_olufsen.remote import BeoControlRemote
+    api, player, emerge, a9 = _two_speaker_player()
+    player.set_output = AsyncMock(return_value=True)
+    player.play_preset_on = AsyncMock(return_value=True)
+    speakers = [
+        {"serial": "EMERGE", "name": "Beosound Emerge", "presets": [{"id": 1, "name": "DR P3"}]},
+        {"serial": "A9", "name": "Davies9", "presets": []},
+    ]
+    remote = BeoControlRemote(api, player, speakers)
+
+    cmds = remote.entity.options["simple_commands"]
+    assert len(set(cmds)) == len(cmds)
+    assert all(len(c) <= 20 for c in cmds)
+
+    # An output button switches the active speaker.
+    out_cmd = next(c for c, name in remote._output_cmds.items() if name == "Davies9")
+    asyncio.run(remote._send({"command": out_cmd}))
+    player.set_output.assert_awaited_once_with("Davies9")
+
+    # A radio button plays that preset on its owning speaker.
+    radio_cmd = next(iter(remote._radio_cmds))
+    asyncio.run(remote._send({"command": radio_cmd}))
+    player.play_preset_on.assert_awaited_once_with("EMERGE", 1)
+
+
+def test_controls_remote_transport_routes_to_active_client():
+    from uc_intg_bang_olufsen.remote import BeoControlRemote
+    api, player, emerge, a9 = _two_speaker_player()
+    emerge.play_pause = AsyncMock(return_value=True)
+    speakers = [{"serial": "EMERGE", "name": "Beosound Emerge", "presets": []}]
+    remote = BeoControlRemote(api, player, speakers)
+    asyncio.run(remote._send({"command": "PLAY_PAUSE"}))
+    emerge.play_pause.assert_awaited_once()
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

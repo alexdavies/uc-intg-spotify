@@ -78,7 +78,7 @@ async def cmd_selftest(_args) -> int:
 
     try:
         import ucapi  # noqa: F401
-        from uc_intg_bang_olufsen import client, config, discovery, player, setup, driver  # noqa: F401
+        from uc_intg_bang_olufsen import client, config, discovery, player, remote, setup, driver  # noqa: F401
         _ok("all integration modules import cleanly")
     except Exception as e:
         _fail(f"integration import error: {e}")

@@ -20,6 +20,7 @@ import ucapi
 from uc_intg_bang_olufsen.config import BeoConfig
 from uc_intg_bang_olufsen.factory import AnyBeoClient, create_client
 from uc_intg_bang_olufsen.player import BeoPlayer
+from uc_intg_bang_olufsen.remote import BeoControlRemote
 from uc_intg_bang_olufsen.setup import BeoSetup
 
 logging.basicConfig(
@@ -35,11 +36,12 @@ config: Optional[BeoConfig] = None
 
 clients: Dict[str, AnyBeoClient] = {}
 player: Optional[BeoPlayer] = None
+controls: Optional[BeoControlRemote] = None
 
 
 async def on_setup_complete():
     """Build the clients and the single unified player entity."""
-    global clients, player
+    global clients, player, controls
     _LOG.info("Setup complete. Creating unified Bang & Olufsen player...")
 
     devices = config.get_devices()
@@ -65,6 +67,9 @@ async def on_setup_complete():
 
     player = BeoPlayer(api, speakers, active_serial=config.get_active_speaker(), config=config)
     api.available_entities.add(player.entity)
+
+    controls = BeoControlRemote(api, player, speakers)
+    api.available_entities.add(controls.entity)
 
     await api.set_device_state(ucapi.DeviceStates.CONNECTED)
 

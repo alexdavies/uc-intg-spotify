@@ -98,6 +98,30 @@ class BeoPlayer:
         return self._speakers[self._active]["client"]
 
     @property
+    def active_client(self):
+        """The client for the currently selected output (for the remote entity)."""
+        return self._client
+
+    async def set_output(self, name: str) -> bool:
+        """Public: switch the active output by speaker name."""
+        rc = await self._select_output({"mode": name})
+        return rc == ucapi.StatusCodes.OK
+
+    async def play_preset_on(self, serial: str, preset_id: int) -> bool:
+        """Public: switch output to a speaker (if needed) and play one of its presets."""
+        if serial in self._speakers and serial != self._active:
+            await self._select_output({"mode": self._speakers[serial]["name"]})
+        return await self._client.activate_preset(preset_id)
+
+    async def select_source_by_name(self, name: str) -> bool:
+        rc = await self._select_source({"source": name})
+        return rc == ucapi.StatusCodes.OK
+
+    async def volume_step(self, delta: int) -> bool:
+        """Public: nudge the active output's volume."""
+        return await self._nudge_volume(delta)
+
+    @property
     def _active_name(self) -> str:
         return self._speakers[self._active]["name"]
 

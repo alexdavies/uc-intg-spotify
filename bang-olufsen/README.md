@@ -45,6 +45,12 @@ favourites and multiroom — none of which Spotify can do.
 - **Radio favourites**: on Mozart speakers each preset is exposed as a source
   (`Radio: ...`). The Beoplay A9 4th gen has no Favorites API, so on it radio is
   reached by selecting the "B&O Radio" source.
+- **A companion "Bang & Olufsen Controls" remote** with explicit tappable pages —
+  *Speakers* (pick the output), *Radio* (one button per favourite), and
+  *Controls* (transport/volume) — since the media player's built-in
+  source/sound-mode selectors are not very discoverable. The buttons route into
+  the same player, so both entities stay in sync, and are available as simple
+  commands for activities/macros.
 
 ## Setup
 
