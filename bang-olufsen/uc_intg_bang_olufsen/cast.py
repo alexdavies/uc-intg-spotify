@@ -81,7 +81,7 @@ class BeoCast:
             cast = self._connect()
             mc = cast.media_controller
             mc.play_media(url, content_type, title=title, stream_type="LIVE",
-                          images=[image] if image else None)
+                          thumb=image)
             try:
                 mc.block_until_active(timeout=10)
             except Exception:  # noqa: BLE001 - fall through to the status poll
