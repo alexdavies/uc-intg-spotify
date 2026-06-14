@@ -16,7 +16,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 import ucapi
-from ucapi.media_player import Attributes, Commands, Features, States
+from ucapi.media_player import Attributes, Commands, DeviceClasses, Features, States
 
 from uc_intg_bang_olufsen.cast import BeoCast
 
@@ -76,6 +76,7 @@ class BeoPlayer:
             name={"en": self._name},
             features=features,
             attributes=attributes,
+            device_class=DeviceClasses.SPEAKER,
             cmd_handler=self.cmd_handler,
         )
         _LOG.info("Created B&O player '%s' (%s)", self._name, self.entity.id)
