@@ -163,6 +163,15 @@ local station-select API and why the community wrappers
 [`pybeoplay`](https://pypi.org/project/pybeoplay/), `giachello/beoplay`) only do
 source-switch + transport.
 
+**Can we just push an airable id to the A9 to play natively?** No. B&O Radio
+(`beoradio`) has **no local play queue and no tune endpoint** — `instantplay`
+consistently 403s with *"PQ with id radio doesn't exist"* (that queue only exists
+for the separate, disabled TuneIn source), the source exposes only
+`modify`/`move`/`reset` links, there's no `playNow`, `contentUri` is ignored, and
+the favourite resources are read-only. The airable id is meaningful only to the
+device's **cloud-backed** native playback (the app/airable cloud populates the
+single `beoradio` slot); there is no local "here's an id, play it" entry point.
+
 **Can we get the actual stream URL?** The device never exposes it — only the
 airable id + artwork. airable's catalog *does* contain the stream links ("multiple
 links per station"), but the **airable API is partner-gated** (needs B&O's
