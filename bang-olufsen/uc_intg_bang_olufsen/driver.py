@@ -53,6 +53,9 @@ async def on_setup_complete():
 
     clients = {}
     players = {}
+    # Rebuild from scratch so a reconfigure (e.g. adding Spotify) replaces stale
+    # entity definitions rather than keeping the old ones (add() won't overwrite).
+    api.available_entities.clear()
     radio_stations = config.get_radio_stations()
 
     # Optional Spotify playlists (cast to speakers via Spotify Connect).
