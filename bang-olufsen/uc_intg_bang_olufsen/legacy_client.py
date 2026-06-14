@@ -85,10 +85,13 @@ class LegacyBeoClient:
             timeout = aiohttp.ClientTimeout(total=6, connect=4, sock_connect=4)
             async with session.request(method, self._base + path, json=json, timeout=timeout) as resp:
                 if 200 <= resp.status < 300:
+                    # Commands return an empty 2xx body, which parses to None;
+                    # never return None on success or callers read it as failure.
                     try:
-                        return await resp.json(content_type=None)
+                        data = await resp.json(content_type=None)
                     except Exception:
-                        return {}
+                        data = None
+                    return {} if data is None else data
                 _LOG.debug("%s %s -> HTTP %s", method, path, resp.status)
                 return None
         except Exception as e:
@@ -198,7 +201,11 @@ class LegacyBeoClient:
         return False
 
     async def _command(self, method: str, path: str, body: Any = None) -> bool:
-        result = await self._request(method, path, json=body)
+        # The ASE API rejects any POST/PUT that lacks a JSON content-type with
+        # HTTP 400 ('Content-Type must be "application/json"'). Bodyless commands
+        # (play/pause/stop/forward/backward) therefore need an explicit empty
+        # JSON body so aiohttp sets the header.
+        result = await self._request(method, path, json=body if body is not None else {})
         return result is not None
 
     # ----- notifications ---------------------------------------------------

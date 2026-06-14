@@ -39,6 +39,67 @@ def test_set_volume_scales_back_to_device_range():
     assert body == {"level": 90}
 
 
+class _FakeResp:
+    def __init__(self, status, json_value=None, raise_json=False):
+        self.status = status
+        self._jv = json_value
+        self._raise = raise_json
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def json(self, content_type=None):
+        if self._raise:
+            raise ValueError("empty body")
+        return self._jv
+
+
+class _FakeSession:
+    def __init__(self, resp):
+        self._resp = resp
+        self.calls = []
+        self.closed = False
+
+    def request(self, method, url, json=None, timeout=None):
+        self.calls.append((method, url, json))
+        return self._resp
+
+    async def close(self):
+        self.closed = True
+
+
+def _client_with_response(resp):
+    c = LegacyBeoClient("10.0.0.9")
+    sess = _FakeSession(resp)
+    c._get_session = AsyncMock(return_value=sess)
+    return c, sess
+
+
+def test_command_sends_json_body_and_succeeds_on_empty_200():
+    # The ASE API 400s a bodyless POST; a bodyless command must still send a
+    # JSON body so aiohttp sets Content-Type, and an empty 200 body (json()
+    # raises) must read as success.
+    c, sess = _client_with_response(_FakeResp(200, raise_json=True))
+    assert asyncio.run(c.play()) is True
+    method, url, body = sess.calls[-1]
+    assert method == "POST" and url.endswith("/Stream/Play")
+    assert body == {}
+
+
+def test_command_succeeds_when_empty_body_parses_to_none():
+    # Some aiohttp versions return None (instead of raising) for an empty body.
+    c, _ = _client_with_response(_FakeResp(200, json_value=None))
+    assert asyncio.run(c.pause()) is True
+
+
+def test_command_fails_on_non_2xx():
+    c, _ = _client_with_response(_FakeResp(400, raise_json=True))
+    assert asyncio.run(c.next_track()) is False
+
+
 def test_parse_sources_ase_pair_format():
     data = {"sources": [
         ["spotify:123@products", {"friendlyName": "Spotify", "sourceType": {"type": "SPOTIFY"}}],
