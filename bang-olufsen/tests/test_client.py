@@ -141,5 +141,28 @@ def test_player_entity_id_is_sanitised():
     assert player.entity.id == "beo_player_3071_1200530_products"
 
 
+def test_remote_buttons_delegate_to_player():
+    from ucapi.media_player import Commands as MpCommands
+    from uc_intg_bang_olufsen.remote import BeoRemote
+    stations = [{"name": "triple j", "url": "http://x", "content_type": "audio/aac"}]
+    api, player, client = _player_for("Davies9", "A9", [], stations)
+    player.cmd_handler = AsyncMock(return_value=ucapi.StatusCodes.OK)
+    remote = BeoRemote(api, player, "Davies9", "A9", stations)
+
+    assert remote.entity.id == "beo_remote_A9"
+    cmds = remote.entity.options["simple_commands"]
+    assert "PLAY_PAUSE" in cmds and len(set(cmds)) == len(cmds)
+
+    # Transport button -> player's media-player handler.
+    asyncio.run(remote._send({"command": "PLAY_PAUSE"}))
+    assert player.cmd_handler.await_args.args[1] == MpCommands.PLAY_PAUSE
+
+    # Radio button -> select_source with the "Radio: <name>" source (casts).
+    radio_cmd = next(iter(remote._radio_cmds))
+    asyncio.run(remote._send({"command": radio_cmd}))
+    args = player.cmd_handler.await_args.args
+    assert args[1] == MpCommands.SELECT_SOURCE and args[2] == {"source": "Radio: triple j"}
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

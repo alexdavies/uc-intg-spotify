@@ -21,6 +21,7 @@ import ucapi
 from uc_intg_bang_olufsen.config import BeoConfig
 from uc_intg_bang_olufsen.factory import AnyBeoClient, create_client
 from uc_intg_bang_olufsen.player import BeoPlayer
+from uc_intg_bang_olufsen.remote import BeoRemote
 from uc_intg_bang_olufsen.setup import BeoSetup
 
 logging.basicConfig(
@@ -67,6 +68,10 @@ async def on_setup_complete():
         player = BeoPlayer(api, speaker, radio_stations)
         players[player.entity.id] = player
         api.available_entities.add(player.entity)
+
+        # Companion "control" surface (transport + radio buttons) for this speaker.
+        remote = BeoRemote(api, player, speaker["name"], serial, radio_stations)
+        api.available_entities.add(remote.entity)
 
     await api.set_device_state(ucapi.DeviceStates.CONNECTED)
 
