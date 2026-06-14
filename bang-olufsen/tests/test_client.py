@@ -184,6 +184,29 @@ def test_player_spotify_fast_path_uses_cached_device():
     client.set_source.assert_not_called()        # no wake / fixed delay
 
 
+def test_player_transport_routes_to_spotify_when_active():
+    from ucapi.media_player import Commands as MpCommands
+    spot = MagicMock()
+    spot.next_track = AsyncMock(return_value=True)
+    api = MagicMock()
+    client = _make_client()
+    client.next_track = AsyncMock(return_value=True)
+    speaker = {"serial": "E", "name": "Emerge", "client": client,
+               "sources": [{"id": "spotify", "name": "Spotify Connect"}]}
+    player = BeoPlayer(api, speaker, [], spot)
+
+    # Spotify active -> NEXT goes to the Spotify Web API, not the (no-op) B&O skip.
+    player.entity.attributes["source"] = "Spotify Connect"
+    asyncio.run(player.cmd_handler(player.entity, MpCommands.NEXT, None))
+    spot.next_track.assert_awaited_once()
+    client.next_track.assert_not_awaited()
+
+    # Non-Spotify source -> NEXT goes to the B&O client.
+    player.entity.attributes["source"] = "Radio: triple j"
+    asyncio.run(player.cmd_handler(player.entity, MpCommands.NEXT, None))
+    client.next_track.assert_awaited_once()
+
+
 def test_remote_playlist_button_plays_spotify():
     from uc_intg_bang_olufsen.remote import BeoRemote
     api, player, client = _player_for("Davies9", "A9", [])

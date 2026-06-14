@@ -181,6 +181,26 @@ class SpotifyClient:
             endpoint += f"?device_id={device_id}"
         return await self._request("PUT", endpoint, json={"context_uri": context_uri}) is not None
 
+    # ----- transport (for Spotify Connect content; B&O skip is a no-op there) --
+
+    async def next_track(self) -> bool:
+        return await self._request("POST", "/me/player/next") is not None
+
+    async def previous_track(self) -> bool:
+        return await self._request("POST", "/me/player/previous") is not None
+
+    async def pause(self) -> bool:
+        return await self._request("PUT", "/me/player/pause") is not None
+
+    async def resume(self) -> bool:
+        return await self._request("PUT", "/me/player/play") is not None
+
+    async def play_pause(self) -> bool:
+        data = await self._request("GET", "/me/player")
+        if data and data.get("is_playing"):
+            return await self.pause()
+        return await self.resume()
+
     async def close(self) -> None:
         if self._session and not self._session.closed:
             await self._session.close()

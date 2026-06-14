@@ -98,6 +98,17 @@ class BeoPlayer:
     async def cmd_handler(self, entity, cmd_id: str, params: dict[str, Any] | None) -> ucapi.StatusCodes:
         _LOG.info("[%s] command %s %s", self._name, cmd_id, params)
         try:
+            # Spotify Connect owns transport while it's the active source — B&O's
+            # next/previous are no-ops there — so route skip/play to the Web API.
+            if self._spotify_active():
+                spotify_transport = {
+                    Commands.NEXT: self._spotify.next_track,
+                    Commands.PREVIOUS: self._spotify.previous_track,
+                    Commands.PLAY_PAUSE: self._spotify.play_pause,
+                    Commands.STOP: self._spotify.pause,
+                }
+                if cmd_id in spotify_transport:
+                    return _status(await spotify_transport[cmd_id]())
             simple = {
                 Commands.ON: self._client.power_on,
                 Commands.OFF: self._client.standby,
@@ -173,6 +184,12 @@ class BeoPlayer:
         if ok:
             self._spotify_now_playing(name)
         return ok
+
+    def _spotify_active(self) -> bool:
+        """True when this speaker's current source is Spotify (so transport should
+        go through the Spotify Web API rather than the no-op B&O skip)."""
+        source = (self.entity.attributes.get(Attributes.SOURCE) or "").lower()
+        return self._spotify is not None and "spotify" in source
 
     def _spotify_now_playing(self, name: str) -> None:
         self._update({

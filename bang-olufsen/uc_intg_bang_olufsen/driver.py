@@ -64,6 +64,9 @@ async def on_setup_complete():
     if config.spotify_is_configured():
         spotify = SpotifyClient(config)
         playlists = await spotify.get_playlists(config.get_playlist_limit())
+        # Pre-warm the Connect device cache so the first playlist tap can target
+        # the speaker directly without a live device lookup.
+        await spotify.get_devices()
         _LOG.info("Spotify enabled: %d playlist(s)", len(playlists))
 
     for device in devices:
