@@ -10,9 +10,20 @@ can recreate entities on restart without re-running discovery.
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 _LOG = logging.getLogger(__name__)
+
+# Custom radio list, played by *casting* a stream URL to each speaker's Chromecast
+# (the B&O radio API can't be driven locally — see API_NOTES.md). Editable in
+# config.json under "radio_stations"; these are the seeded defaults.
+DEFAULT_RADIO_STATIONS: List[Dict[str, str]] = [
+    {"name": "BBC Radio 2", "url": "https://lsn.lv/bbcradio.m3u8?station=bbc_radio_two&bitrate=320000", "content_type": "application/x-mpegurl"},
+    {"name": "BBC Radio 4", "url": "https://lsn.lv/bbcradio.m3u8?station=bbc_radio_fourfm&bitrate=320000", "content_type": "application/x-mpegurl"},
+    {"name": "BBC Radio 6 Music", "url": "https://lsn.lv/bbcradio.m3u8?station=bbc_6music&bitrate=320000", "content_type": "application/x-mpegurl"},
+    {"name": "triple j", "url": "https://live-radio01.mediahubaustralia.com/2TJW/aac/", "content_type": "audio/aac"},
+    {"name": "Energy Zürich", "url": "https://energyzuerich.ice.infomaniak.ch/energyzuerich-high.mp3", "content_type": "audio/mpeg"},
+]
 
 
 class BeoConfig:
@@ -58,12 +69,13 @@ class BeoConfig:
         self._data["devices"] = list(unique.values())
         return self._save()
 
-    def get_active_speaker(self) -> Optional[str]:
-        """Serial of the last-selected output speaker, if any."""
-        return self._data.get("active_speaker")
+    def get_radio_stations(self) -> List[Dict[str, str]]:
+        """The custom cast radio list (config override, else seeded defaults)."""
+        stations = self._data.get("radio_stations")
+        return list(stations) if stations else list(DEFAULT_RADIO_STATIONS)
 
-    def set_active_speaker(self, serial: str) -> bool:
-        self._data["active_speaker"] = serial
+    def set_radio_stations(self, stations: List[Dict[str, str]]) -> bool:
+        self._data["radio_stations"] = stations
         return self._save()
 
     def reset(self) -> bool:

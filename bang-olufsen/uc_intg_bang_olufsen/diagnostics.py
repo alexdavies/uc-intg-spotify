@@ -106,10 +106,11 @@ async def cmd_selftest(_args) -> int:
         speaker = {
             "serial": "TEST", "name": "Test Speaker", "client": c,
             "sources": [{"id": "spotify", "name": "Spotify"}],
-            "presets": [{"id": 1, "name": "Radio One"}],
         }
-        player = BeoPlayer(api, speaker)
-        assert "Radio: Radio One" in player.entity.attributes["source_list"]
+        stations = [{"name": "Radio One", "url": "http://example/stream", "content_type": "audio/mpeg"}]
+        player = BeoPlayer(api, speaker, stations)
+        src = player.entity.attributes["source_list"]
+        assert "Spotify" in src and "Radio: Radio One" in src
         assert player.entity.id == "beo_player_TEST"
         _ok("per-speaker player entity constructs and wires correctly")
     except Exception as e:

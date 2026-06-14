@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import ucapi
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -86,50 +87,57 @@ def test_get_presets_maps_ids():
     ]
 
 
-def _player_for(name, serial, sources, presets):
+def _player_for(name, serial, sources, radio_stations=None):
     """A single-speaker BeoPlayer with a mocked client and UC API."""
     api = MagicMock()
     client = _make_client()
     client.name = name
-    speaker = {"serial": serial, "name": name, "client": client,
-               "sources": sources, "presets": presets}
-    return api, BeoPlayer(api, speaker), client
+    speaker = {"serial": serial, "name": name, "client": client, "sources": sources}
+    return api, BeoPlayer(api, speaker, radio_stations or []), client
 
 
-def test_player_exposes_own_sources_and_radio_presets():
+def test_player_exposes_own_sources_and_radio_stations():
     api, player, client = _player_for(
         "Beosound Emerge", "EMERGE",
-        [{"id": "spotify", "name": "Spotify"}], [{"id": 1, "name": "DR P3"}])
+        [{"id": "spotify", "name": "Spotify"}],
+        [{"name": "triple j", "url": "http://x/aac", "content_type": "audio/aac"}])
     assert player.entity.id == "beo_player_EMERGE"
     src = player.entity.attributes["source_list"]
-    assert "Spotify" in src and f"{RADIO_PREFIX}DR P3" in src
+    assert "Spotify" in src and f"{RADIO_PREFIX}triple j" in src
     # Per-speaker player has no output/sound-mode selector.
     assert "sound_mode_list" not in player.entity.attributes
 
 
-def test_player_select_source_routes_to_its_client():
+def test_player_select_native_source_routes_to_client():
     api, player, client = _player_for(
-        "Beosound Emerge", "EMERGE",
-        [{"id": "spotify", "name": "Spotify"}], [{"id": 1, "name": "DR P3"}])
+        "Beosound Emerge", "EMERGE", [{"id": "spotify", "name": "Spotify"}])
     client.set_source = AsyncMock(return_value=True)
-    client.activate_preset = AsyncMock(return_value=True)
-
     asyncio.run(player._select_source({"source": "Spotify"}))
     client.set_source.assert_awaited_once_with("spotify")
-    asyncio.run(player._select_source({"source": f"{RADIO_PREFIX}DR P3"}))
-    client.activate_preset.assert_awaited_once_with(1)
+
+
+def test_player_select_radio_casts_stream_url():
+    api, player, client = _player_for(
+        "Davies9", "A9", [],
+        [{"name": "triple j", "url": "http://x/aac", "content_type": "audio/aac"}])
+    # Casting is delegated to BeoCast.play_sync (run in an executor).
+    player._cast.play_sync = MagicMock(return_value=True)
+    rc = asyncio.run(player._select_source({"source": f"{RADIO_PREFIX}triple j"}))
+    player._cast.play_sync.assert_called_once_with("http://x/aac", "audio/aac", "triple j")
+    assert rc == ucapi.StatusCodes.OK
+    assert player.entity.attributes["source"] == f"{RADIO_PREFIX}triple j"
 
 
 def test_player_push_updates_entity():
     api, player, client = _player_for(
-        "Davies9", "A9", [{"id": "radio:1", "name": "B&O Radio"}], [])
+        "Davies9", "A9", [{"id": "radio:1", "name": "B&O Radio"}])
     # The client's push handler is wired to this player; a push updates the entity.
     asyncio.run(client.on_update({"title": "Now Playing"}))
     api.configured_entities.update_attributes.assert_called_once()
 
 
 def test_player_entity_id_is_sanitised():
-    api, player, client = _player_for("X", "3071.1200530@products", [], [])
+    api, player, client = _player_for("X", "3071.1200530@products", [])
     assert player.entity.id == "beo_player_3071_1200530_products"
 
 

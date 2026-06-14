@@ -10,39 +10,46 @@ per configured speaker; there is no shared/unified player or output selector.
 :license: MPL-2.0, see LICENSE for more details.
 """
 
+import asyncio
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import ucapi
 from ucapi.media_player import Attributes, Commands, Features, States
 
+from uc_intg_bang_olufsen.cast import BeoCast
+
 _LOG = logging.getLogger(__name__)
 
-# Prefix marking radio favourites (presets) in the source list.
+# Prefix marking radio stations in the source list.
 RADIO_PREFIX = "Radio: "
 
 
 class BeoPlayer:
     """One media player entity for a single speaker."""
 
-    def __init__(self, api: ucapi.IntegrationAPI, speaker: Dict[str, Any]):
+    def __init__(self, api: ucapi.IntegrationAPI, speaker: Dict[str, Any],
+                 radio_stations: Optional[List[Dict[str, str]]] = None):
         """
         Args:
-            speaker: {serial, name, client, sources, presets}.
+            speaker: {serial, name, client, sources}.
+            radio_stations: custom cast radio list [{name, url, content_type}].
         """
         self._api = api
         self._client = speaker["client"]
         self._serial = speaker["serial"]
         self._name = speaker.get("name") or self._serial
 
-        # Source/preset name -> id lookups for this speaker.
+        # Native input sources (Spotify, Line-In, ...): name -> id.
         self._source_ids: Dict[str, str] = {
             src["name"]: src["id"] for src in speaker.get("sources", [])
         }
-        self._preset_ids: Dict[str, int] = {
-            f"{RADIO_PREFIX}{p['name']}": p["id"] for p in speaker.get("presets", [])
+        # Custom radio list, played by casting a stream URL: "Radio: X" -> station.
+        self._radio: Dict[str, Dict[str, str]] = {
+            f"{RADIO_PREFIX}{s['name']}": s for s in (radio_stations or [])
         }
+        self._cast = BeoCast(self._client.host, self._name)
 
         # This speaker's push updates flow straight to this entity.
         self._client.on_update = self._on_update
@@ -113,8 +120,8 @@ class BeoPlayer:
         if not params or "source" not in params:
             return ucapi.StatusCodes.BAD_REQUEST
         source = params["source"]
-        if source in self._preset_ids:
-            ok = await self._client.activate_preset(self._preset_ids[source])
+        if source in self._radio:
+            ok = await self._cast_station(self._radio[source])
         elif source in self._source_ids:
             ok = await self._client.set_source(self._source_ids[source])
         else:
@@ -123,6 +130,18 @@ class BeoPlayer:
         if ok:
             self._update({Attributes.SOURCE: source})
         return _status(ok)
+
+    async def _cast_station(self, station: Dict[str, str]) -> bool:
+        """Cast a radio stream URL to this speaker's Chromecast (off the loop)."""
+        loop = asyncio.get_event_loop()
+        try:
+            return await loop.run_in_executor(
+                None, self._cast.play_sync,
+                station["url"], station.get("content_type", "audio/mpeg"), station["name"],
+            )
+        except Exception as e:  # noqa: BLE001
+            _LOG.error("[%s] cast of %r failed: %s", self._name, station.get("name"), e)
+            return False
 
     async def _mute_toggle(self) -> bool:
         muted = bool(self.entity.attributes.get(Attributes.MUTED))
@@ -140,7 +159,11 @@ class BeoPlayer:
     # ----- helpers ---------------------------------------------------------
 
     def _source_list(self) -> List[str]:
-        return list(self._source_ids) + list(self._preset_ids)
+        return list(self._source_ids) + list(self._radio)
+
+    def close(self) -> None:
+        """Release the Chromecast connection (called on shutdown)."""
+        self._cast.disconnect()
 
     async def _on_update(self, attrs: Dict[str, Any]) -> None:
         await self._apply(attrs)

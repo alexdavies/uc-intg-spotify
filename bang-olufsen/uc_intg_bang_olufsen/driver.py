@@ -50,6 +50,7 @@ async def on_setup_complete():
 
     clients = {}
     players = {}
+    radio_stations = config.get_radio_stations()
     for device in devices:
         serial = device.get("serial") or device.get("host")
         client = create_client(
@@ -62,9 +63,8 @@ async def on_setup_complete():
             "name": device.get("name") or serial,
             "client": client,
             "sources": await client.get_sources(),
-            "presets": await client.get_presets(),
         }
-        player = BeoPlayer(api, speaker)
+        player = BeoPlayer(api, speaker, radio_stations)
         players[player.entity.id] = player
         api.available_entities.add(player.entity)
 
@@ -113,6 +113,8 @@ def shutdown_handler(signum, frame):
     _LOG.warning("Received signal %s. Shutting down...", signum)
 
     async def cleanup():
+        for player in players.values():
+            player.close()
         for client in clients.values():
             await client.close()
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
