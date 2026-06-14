@@ -235,6 +235,24 @@ use the `ww` worldwide variant. `lsn.lv` also accepts `&uk=1` for the UK-only
 high-quality variant. Source for current BBC URLs:
 <https://garfnet.org.uk/cms/bbc-national-and-local-radio-hls-streams/>.
 
+## Spotify playlists (optional, via Spotify Connect — not yet live-tested)
+Spotify playback can't be originated on the speaker locally, so the optional
+"Spotify" page drives it through the **Spotify Web API**: `PUT /me/player/play?
+device_id=<speaker>` with the playlist `context_uri`, targeting the speaker as a
+Spotify Connect device. Auth is the speaker integration's *own* OAuth (vendored
+`spotify.py`, reusing the same app + `https://example.com/callback` redirect);
+tokens live in the B&O config. Setup asks for Client ID/Secret, then an auth code.
+Playback flow (`BeoPlayer.play_spotify_playlist`): wake the speaker's Spotify
+source (so it registers as a Connect device) → `resolve_device_id(speaker_name)`
+→ start the playlist.
+- ⚠️ **Device-name matching is the risk to verify.** We match the speaker's
+  friendly name against Spotify's `/me/player/devices` names (contains, either
+  direction) + a cached map. If B&O exposes a *different* Spotify Connect name
+  than the speaker's friendly name, resolution fails ("no matching device") —
+  check the logged device list and, if needed, add a name override.
+- Connect devices may only appear when awake; we select the Spotify source first
+  to nudge it. Spotify playback also needs Premium.
+
 ## Related fixes already committed (see git log)
 - Mozart: preset id (key not UUID), volume parsing (nested `.level`), `get_state`
   active-source resolution.
