@@ -151,7 +151,16 @@ class BeoPlayer:
         """Start a Spotify playlist on this speaker via Spotify Connect."""
         if not self._spotify:
             return False
-        # Wake this speaker's Spotify source so it registers as a Connect device.
+        # Fast path: target the known Connect device directly — Spotify wakes it,
+        # so no B&O source wake / fixed delay is needed in the common case.
+        device_id = self._spotify.cached_device_id(self._name) \
+            or await self._spotify.resolve_device_id(self._name)
+        if device_id and await self._spotify.start_playlist(uri, device_id):
+            self._spotify_now_playing(name)
+            return True
+
+        # Fallback: the device wasn't reachable; wake this speaker's Spotify source
+        # so it registers with Spotify, then retry (this is the slower path).
         spotify_src = self._source_ids.get("Spotify Connect") or self._source_ids.get("Spotify")
         if spotify_src:
             await self._client.set_source(spotify_src)
@@ -162,13 +171,16 @@ class BeoPlayer:
             return False
         ok = await self._spotify.start_playlist(uri, device_id)
         if ok:
-            self._update({
-                Attributes.SOURCE: "Spotify Connect" if "Spotify Connect" in self._source_ids else "Spotify",
-                Attributes.MEDIA_TITLE: name,
-                Attributes.MEDIA_IMAGE_URL: "",
-                Attributes.STATE: States.PLAYING,
-            })
+            self._spotify_now_playing(name)
         return ok
+
+    def _spotify_now_playing(self, name: str) -> None:
+        self._update({
+            Attributes.SOURCE: "Spotify Connect" if "Spotify Connect" in self._source_ids else "Spotify",
+            Attributes.MEDIA_TITLE: name,
+            Attributes.MEDIA_IMAGE_URL: "",
+            Attributes.STATE: States.PLAYING,
+        })
 
     async def _cast_station(self, station: Dict[str, str]) -> bool:
         """Cast a radio stream URL to this speaker's Chromecast (off the loop)."""

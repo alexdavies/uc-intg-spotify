@@ -149,6 +149,7 @@ def test_player_entity_id_is_sanitised():
 
 def test_player_play_spotify_playlist():
     spot = MagicMock()
+    spot.cached_device_id = MagicMock(return_value=None)  # force live resolve
     spot.resolve_device_id = AsyncMock(return_value="dev123")
     spot.start_playlist = AsyncMock(return_value=True)
     api = MagicMock()
@@ -162,6 +163,25 @@ def test_player_play_spotify_playlist():
     spot.resolve_device_id.assert_awaited_once_with("Davies9")
     spot.start_playlist.assert_awaited_once_with("spotify:playlist:1", "dev123")
     assert player.entity.attributes["media_title"] == "Chill"
+
+
+def test_player_spotify_fast_path_uses_cached_device():
+    spot = MagicMock()
+    spot.cached_device_id = MagicMock(return_value="cachedDev")
+    spot.resolve_device_id = AsyncMock(return_value=None)
+    spot.start_playlist = AsyncMock(return_value=True)
+    api = MagicMock()
+    client = _make_client()
+    client.name = "Davies9"
+    client.set_source = AsyncMock()
+    speaker = {"serial": "A9", "name": "Davies9", "client": client, "sources": []}
+    player = BeoPlayer(api, speaker, [], spot)
+
+    ok = asyncio.run(player.play_spotify_playlist("spotify:playlist:1", "X"))
+    assert ok is True
+    spot.start_playlist.assert_awaited_once_with("spotify:playlist:1", "cachedDev")
+    spot.resolve_device_id.assert_not_awaited()  # no live lookup needed
+    client.set_source.assert_not_called()        # no wake / fixed delay
 
 
 def test_remote_playlist_button_plays_spotify():

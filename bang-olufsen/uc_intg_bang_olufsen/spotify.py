@@ -158,6 +158,14 @@ class SpotifyClient:
             self._config.cache_devices({d["name"]: d["id"] for d in devices if d.get("id")})
         return devices
 
+    def cached_device_id(self, name: str) -> Optional[str]:
+        """A previously seen Connect device id for this speaker (no network call)."""
+        target = (name or "").lower()
+        for dn, did in self._config.get_cached_devices().items():
+            if dn and (dn.lower() in target or target in dn.lower()):
+                return did
+        return None
+
     async def resolve_device_id(self, name: str) -> Optional[str]:
         """Find a Spotify Connect device id matching a speaker name (live, then cached)."""
         target = (name or "").lower()
@@ -165,10 +173,7 @@ class SpotifyClient:
             dn = (d.get("name") or "").lower()
             if dn and (dn in target or target in dn) and d.get("id"):
                 return d["id"]
-        for dn, did in self._config.get_cached_devices().items():
-            if dn and (dn.lower() in target or target in dn.lower()):
-                return did
-        return None
+        return self.cached_device_id(name)
 
     async def start_playlist(self, context_uri: str, device_id: Optional[str]) -> bool:
         endpoint = "/me/player/play"
