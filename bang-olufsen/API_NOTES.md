@@ -184,9 +184,10 @@ anyway (BBC, ABC/triple j, etc.).
 ## The viable instant path: Chromecast — ✅ PROVEN (real audio, 2026-06-14)
 Both speakers advertise `_googlecast._tcp` ("Alex's Emerge", "Davies9"). Casting a
 **stream URL** via `pychromecast` (v14) gives instant, arbitrary-station playback,
-bypassing the B&O radio API entirely. **Verified with real audio on the A9** —
-triple j and BBC Radio 6 Music were confirmed *audibly* playing (not just a
-PLAYING status).
+bypassing the B&O radio API entirely. **Verified with real audio on both
+speakers** through the integration's own path (`BeoPlayer._select_source` →
+`BeoCast`): triple j confirmed *audibly* playing on the A9 **and** the Emerge,
+BBC Radio 6 Music audible on the A9 (not just a PLAYING status).
 
 How it works:
 - `pychromecast.get_listed_chromecasts(friendly_names=["Davies9"], discovery_timeout=12)`
