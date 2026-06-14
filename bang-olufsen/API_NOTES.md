@@ -181,25 +181,56 @@ partly known, but relying on it is fragile/grey-area.) Practical path: hand-cura
 a real stream URL per station — most big stations publish their own public streams
 anyway (BBC, ABC/triple j, etc.).
 
-## The viable instant, cross-device path: Chromecast
+## The viable instant path: Chromecast — ✅ PROVEN (real audio, 2026-06-14)
 Both speakers advertise `_googlecast._tcp` ("Alex's Emerge", "Davies9"). Casting a
-**stream URL** via `pychromecast` is the realistic way to get instant, uniform,
-arbitrary-station playback on **both** the A9 (primary) and the Emerge, bypassing
-the B&O radio API entirely. Trade-offs: adds the `pychromecast` dependency; uses
-the speaker's "Chromecast built-in" input; needs a curated stream-URL per station.
-**Not yet proven with audio** — verify a real cast plays before building on it.
-(See [`giachello/netradio`](https://github.com/giachello/netradio) for prior art:
-web-radio streams played to Chromecast.)
+**stream URL** via `pychromecast` (v14) gives instant, arbitrary-station playback,
+bypassing the B&O radio API entirely. **Verified with real audio on the A9** —
+triple j and BBC Radio 6 Music were confirmed *audibly* playing (not just a
+PLAYING status).
 
-## Collected stream/station data (for a future custom radio list)
-| Station | airable id (A9 / Mozart presets) | stream URL (Emerge `post_uri_source` / Cast) |
-|---|---|---|
-| triple j (NSW) | 2554623176809400 | https://live-radio01.mediahubaustralia.com/2TJW/aac/ |
-| Energy Zürich | 3787747871130705 | (tbd) |
-| BBC Radio 2 | 2972408424131572 | (tbd) |
-| BBC Radio 4 | 1022963300812989 | (tbd) |
-| BBC Radio 6 Music | 8785094880964608 | (tbd) |
-| Classic FM | 4888751676771790 | (tbd) |
+How it works:
+- `pychromecast.get_listed_chromecasts(friendly_names=["Davies9"], discovery_timeout=12)`
+  (discovery is flaky — retry 2-3×; or connect by host). `cast.wait()`.
+- `cast.set_volume(0.4)`, then `cast.media_controller.play_media(url, content_type,
+  title=..., stream_type="LIVE")`. The default media receiver app (`CC1AD845`)
+  launches automatically.
+- The A9 then switches its **active source to "Chromecast built-in" (GC4A)** and
+  outputs audio — verified via the B&O API (power on, source=Chromecast, device
+  volume 36, unmuted). *This source switch is the real proof, vs. the TuneIn
+  false-positive which never switched and stuck in "preparing".*
+
+Gotchas / lessons:
+- **One receiver = one stream.** `play_media` replaces the current media; stations
+  are not simultaneous. (An early test cast 3 in a row, ~5s each — looked like
+  nothing played; it was just too brief + sequential.)
+- **PLAYING status ≠ audible.** Always confirm with a human, or at least check the
+  B&O API shows source=Chromecast + unmuted + sane volume.
+- Polling can race a socket reconnect (`NotConnected: ... is connecting`); wrap
+  `update_status()` and retry, or rely on pushed status.
+- Building this means adding the `pychromecast` dependency (not yet in
+  `requirements.txt`) and a cast control path in the integration.
+- Prior art: [`giachello/netradio`](https://github.com/giachello/netradio).
+
+## Collected stream/station data (for a cast-based custom radio list)
+`airable id` is for the speakers' own native radio (read-only / not locally
+pushable — see above). `stream URL` is what we actually use for **casting** (and
+Mozart `post_uri_source`).
+
+| Station | airable id | cast stream URL | content_type | verified |
+|---|---|---|---|---|
+| triple j (NSW) | 2554623176809400 | `https://live-radio01.mediahubaustralia.com/2TJW/aac/` | audio/aac | ✅ audible |
+| BBC Radio 6 Music | 8785094880964608 | `https://lsn.lv/bbcradio.m3u8?station=bbc_6music&bitrate=320000` | application/x-mpegurl | ✅ audible |
+| Energy Zürich | 3787747871130705 | `https://energyzuerich.ice.infomaniak.ch/energyzuerich-high.mp3` | audio/mpeg | ✅ PLAYING |
+| BBC Radio 2 | 2972408424131572 | `https://lsn.lv/bbcradio.m3u8?station=bbc_radio_two&bitrate=320000` | application/x-mpegurl | (lsn.lv, untested) |
+| BBC Radio 4 | 1022963300812989 | `https://lsn.lv/bbcradio.m3u8?station=bbc_radio_fourfm&bitrate=320000` | application/x-mpegurl | (lsn.lv, untested) |
+| Classic FM | 4888751676771790 | (tbd) | | |
+
+BBC notes: the old `as-hls-ww-live.akamaized.net/pool_904/...` URLs are **dead
+(HTTP 410)** — BBC rotates the pool number. Use the **`lsn.lv`** resolver
+(`https://lsn.lv/bbcradio.m3u8?station=<id>&bitrate=320000`), which returns a
+master playlist pointing at the *current* akamai pool; the `ww` (worldwide)
+variant played fine from Australia (not UK-geo-locked). Source for current BBC
+URLs: <https://garfnet.org.uk/cms/bbc-national-and-local-radio-hls-streams/>.
 
 ## Related fixes already committed (see git log)
 - Mozart: preset id (key not UUID), volume parsing (nested `.level`), `get_state`
