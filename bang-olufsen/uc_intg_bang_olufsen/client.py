@@ -299,6 +299,15 @@ class BeoClient:
             _LOG.error("Beolink join %s failed on %s: %s", jid, self.name, e)
             return False
 
+    async def beolink_join_latest(self) -> bool:
+        """Join the most recent Beolink experience on the network (multiroom)."""
+        try:
+            await self._client.join_latest_beolink_experience()
+            return True
+        except Exception as e:
+            _LOG.error("Beolink join-latest failed on %s: %s", self.name, e)
+            return False
+
     async def beolink_leave(self) -> bool:
         try:
             await self._client.post_beolink_leave()

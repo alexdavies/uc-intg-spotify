@@ -56,6 +56,10 @@ class BeoPlayer:
         # Last known power state (Mozart reports it); used to ignore the
         # now-playing metadata B&O mirrors from other speakers while this one is off.
         self._powered: Optional[bool] = None
+        # A Beolink-capable (Mozart) client used to join/leave multiroom. Set by
+        # the driver when there's another speaker to group with.
+        self._joiner = None
+        self._other_name: str = ""
 
         # This speaker's push updates flow straight to this entity.
         self._client.on_update = self._on_update
@@ -270,6 +274,29 @@ class BeoPlayer:
     def close(self) -> None:
         """Release the Chromecast connection (called on shutdown)."""
         self._cast.disconnect()
+
+    # ----- multiroom (Beolink) --------------------------------------------
+
+    def set_multiroom(self, joiner, other_name: str) -> None:
+        """Enable a multiroom button. ``joiner`` is the Beolink-capable (Mozart)
+        client that will join/leave the group; ``other_name`` labels the button."""
+        self._joiner = joiner
+        self._other_name = other_name
+
+    @property
+    def has_multiroom(self) -> bool:
+        return self._joiner is not None
+
+    @property
+    def other_name(self) -> str:
+        return self._other_name
+
+    async def join_multiroom(self) -> bool:
+        """Group the speakers: the Mozart speaker joins the current experience."""
+        return bool(self._joiner) and await self._joiner.beolink_join_latest()
+
+    async def leave_multiroom(self) -> bool:
+        return bool(self._joiner) and await self._joiner.beolink_leave()
 
     async def _on_update(self, attrs: Dict[str, Any]) -> None:
         await self._apply(attrs)

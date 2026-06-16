@@ -236,6 +236,29 @@ def test_remote_playlist_button_plays_spotify():
     assert rc == ucapi.StatusCodes.OK
 
 
+def test_remote_multiroom_join_leave():
+    from uc_intg_bang_olufsen.remote import BeoRemote
+    api, player, client = _player_for("Davies9", "A9", [])
+    joiner = MagicMock()
+    joiner.beolink_join_latest = AsyncMock(return_value=True)
+    joiner.beolink_leave = AsyncMock(return_value=True)
+    player.set_multiroom(joiner, "Alex's Emerge")
+    remote = BeoRemote(api, player, "Davies9", "A9", [], [])
+
+    assert "JOIN_GROUP" in remote.entity.options["simple_commands"]
+    asyncio.run(remote._send({"command": "JOIN_GROUP"}))
+    joiner.beolink_join_latest.assert_awaited_once()
+    asyncio.run(remote._send({"command": "LEAVE_GROUP"}))
+    joiner.beolink_leave.assert_awaited_once()
+
+
+def test_remote_no_multiroom_page_when_solo():
+    from uc_intg_bang_olufsen.remote import BeoRemote
+    api, player, client = _player_for("Davies9", "A9", [])
+    remote = BeoRemote(api, player, "Davies9", "A9", [], [])
+    assert "JOIN_GROUP" not in remote.entity.options["simple_commands"]
+
+
 def test_remote_buttons_delegate_to_player():
     from ucapi.media_player import Commands as MpCommands
     from uc_intg_bang_olufsen.remote import BeoRemote

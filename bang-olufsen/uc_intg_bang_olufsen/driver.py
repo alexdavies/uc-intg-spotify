@@ -103,6 +103,8 @@ async def on_setup_complete():
         await spotify.get_devices()
         _LOG.info("Spotify enabled: %d playlist(s) shown (%d curated)", len(playlists), len(curated))
 
+    # Phase 1: build clients + players.
+    built = []  # (player, serial, name)
     for device in devices:
         serial = device.get("serial") or device.get("host")
         client = create_client(
@@ -119,9 +121,20 @@ async def on_setup_complete():
         player = BeoPlayer(api, speaker, radio_stations, spotify)
         players[player.entity.id] = player
         api.available_entities.add(player.entity)
+        built.append((player, serial, speaker["name"]))
 
-        # Companion "control" surface (transport + radio + Spotify) for this speaker.
-        remote = BeoRemote(api, player, speaker["name"], serial, radio_stations, playlists)
+    # Enable multiroom when there's a 2nd speaker and a Beolink-capable (Mozart)
+    # client to do the joining. "Join" always drives that joiner to join the
+    # current experience; from either remote it groups the two speakers.
+    joiner = next((c for c in clients.values() if hasattr(c, "beolink_join_latest")), None)
+    if joiner and len(built) > 1:
+        for player, _serial, name in built:
+            other = next((n for _p, _s, n in built if n != name), name)
+            player.set_multiroom(joiner, other)
+
+    # Phase 2: build each speaker's companion "control" remote.
+    for player, serial, name in built:
+        remote = BeoRemote(api, player, name, serial, radio_stations, playlists)
         api.available_entities.add(remote.entity)
 
     # (Re)start the Spotify now-playing poller.

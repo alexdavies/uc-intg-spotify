@@ -80,6 +80,11 @@ class BeoRemote:
             self._playlist_buttons.append((c, pl["name"]))
             simple_commands.append(c)
 
+        # Multiroom (Beolink) — only when there's another speaker to group with.
+        self._multiroom = player.has_multiroom
+        if self._multiroom:
+            simple_commands += ["JOIN_GROUP", "LEAVE_GROUP"]
+
         self.entity = ucapi.Remote(
             identifier="beo_remote_" + _entity_id(serial)[len("beo_player_"):],
             name={"en": f"{name} Controls"},
@@ -103,6 +108,11 @@ class BeoRemote:
         pages = [controls]
         pages.extend(_button_pages(self._radio_buttons, "radio", "Radio"))
         pages.extend(_button_pages(self._playlist_buttons, "spotify", "Spotify"))
+        if self._multiroom:
+            mr = UiPage(page_id="multiroom", name="Multiroom", grid=Size(4, 6))
+            mr.add(create_ui_text(f"Play with {self._player.other_name}", 0, 0, Size(4, 1), "JOIN_GROUP"))
+            mr.add(create_ui_text("Stop multiroom", 0, 2, Size(4, 1), "LEAVE_GROUP"))
+            pages.append(mr)
         return pages
 
     async def cmd_handler(self, entity, cmd_id: str, params: dict[str, Any] | None) -> ucapi.StatusCodes:
@@ -136,6 +146,12 @@ class BeoRemote:
         if command in self._playlist_cmds:
             uri, plname = self._playlist_cmds[command]
             ok = await self._player.play_spotify_playlist(uri, plname)
+            return ucapi.StatusCodes.OK if ok else ucapi.StatusCodes.SERVER_ERROR
+        if command == "JOIN_GROUP":
+            ok = await self._player.join_multiroom()
+            return ucapi.StatusCodes.OK if ok else ucapi.StatusCodes.SERVER_ERROR
+        if command == "LEAVE_GROUP":
+            ok = await self._player.leave_multiroom()
             return ucapi.StatusCodes.OK if ok else ucapi.StatusCodes.SERVER_ERROR
         if command in _TRANSPORT:
             return await self._player.cmd_handler(self._player.entity, _TRANSPORT[command], None)
