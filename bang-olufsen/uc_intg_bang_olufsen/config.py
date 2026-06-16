@@ -21,7 +21,7 @@ _LOG = logging.getLogger(__name__)
 DEFAULT_RADIO_STATIONS: List[Dict[str, str]] = [
     {"name": "triple j", "url": "https://live-radio01.mediahubaustralia.com/2TJW/aac/", "content_type": "audio/aac", "image": "https://static.airable.io/15/36/215005.png"},
     {"name": "Energy Zürich", "url": "https://energyzuerich.ice.infomaniak.ch/energyzuerich-high.mp3", "content_type": "audio/mpeg", "image": "https://static.airable.io/74/24/436752.png"},
-    {"name": "Classic FM", "url": "https://media-ssl.musicradio.com/ClassicFMMP3", "content_type": "audio/mpeg", "image": "https://static.airable.io/05/49/143222.png"},
+    {"name": "BBC Radio 3", "url": "https://lsn.lv/bbcradio.m3u8?station=bbc_radio_three&bitrate=320000", "content_type": "application/x-mpegurl", "image": ""},
 ]
 
 
