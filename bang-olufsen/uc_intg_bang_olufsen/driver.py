@@ -39,11 +39,35 @@ config: Optional[BeoConfig] = None
 clients: Dict[str, AnyBeoClient] = {}
 players: Dict[str, BeoPlayer] = {}  # entity id -> player
 spotify: Optional[SpotifyClient] = None
+spotify_poll_task: Optional[asyncio.Task] = None
+
+# How often to refresh now-playing from Spotify while it's the active source.
+SPOTIFY_POLL_SEC = 5
+
+
+async def spotify_poll_loop():
+    """Keep the active Spotify speaker's now-playing card in sync. The speakers'
+    own push doesn't track Spotify Connect track changes (and the legacy A9 sends
+    no artwork), so poll Spotify and route the update to the matching speaker."""
+    while True:
+        await asyncio.sleep(SPOTIFY_POLL_SEC)
+        if not spotify:
+            continue
+        try:
+            info = await spotify.get_now_playing()
+        except Exception:  # noqa: BLE001
+            continue
+        if not info or not info.get("is_playing") or not info.get("device"):
+            continue
+        for player in players.values():
+            if player.is_spotify_device(info["device"]):
+                player.apply_now_playing(info)
+                break
 
 
 async def on_setup_complete():
     """Build the clients and one media-player entity per configured speaker."""
-    global clients, players, spotify
+    global clients, players, spotify, spotify_poll_task
     _LOG.info("Setup complete. Creating one Bang & Olufsen player per speaker...")
 
     devices = config.get_devices()
@@ -99,6 +123,13 @@ async def on_setup_complete():
         # Companion "control" surface (transport + radio + Spotify) for this speaker.
         remote = BeoRemote(api, player, speaker["name"], serial, radio_stations, playlists)
         api.available_entities.add(remote.entity)
+
+    # (Re)start the Spotify now-playing poller.
+    if spotify_poll_task and not spotify_poll_task.done():
+        spotify_poll_task.cancel()
+    spotify_poll_task = None
+    if spotify:
+        spotify_poll_task = asyncio.ensure_future(spotify_poll_loop())
 
     await api.set_device_state(ucapi.DeviceStates.CONNECTED)
 

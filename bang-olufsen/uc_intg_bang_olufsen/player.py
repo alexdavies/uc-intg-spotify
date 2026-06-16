@@ -192,32 +192,43 @@ class BeoPlayer:
         return self._spotify is not None and "spotify" in source
 
     def _spotify_now_playing(self, name: str) -> None:
-        # Immediate feedback. Do NOT clear the artwork — the real track + art are
-        # filled in by the background refresh below (and the speaker's own push),
-        # so clearing here just left the card blank until the next push.
+        # Immediate feedback (don't clear art); the poll loop fills the real track.
         self._update({
             Attributes.SOURCE: "Spotify Connect" if "Spotify Connect" in self._source_ids else "Spotify",
             Attributes.MEDIA_TITLE: name,
             Attributes.STATE: States.PLAYING,
         })
-        asyncio.ensure_future(self._refresh_spotify_now_playing())
+        asyncio.ensure_future(self._first_now_playing())
 
-    async def _refresh_spotify_now_playing(self) -> None:
-        """Pull the actual current track + album art from Spotify (authoritative,
-        and works even on legacy speakers whose push carries no artwork)."""
+    async def _first_now_playing(self) -> None:
+        """Snappy first now-playing fetch (the driver's poll loop keeps it fresh)."""
         try:
             await asyncio.sleep(1.0)  # let the new track register with Spotify
             info = await self._spotify.get_now_playing()
+            if info and (not info.get("device") or self.is_spotify_device(info["device"])):
+                self.apply_now_playing(info)
         except Exception:  # noqa: BLE001
-            return
-        if not info:
-            return
-        mapped: Dict[str, Any] = {}
-        if info.get("title"):
-            mapped[Attributes.MEDIA_TITLE] = info["title"]
-        if info.get("artist"):
-            mapped[Attributes.MEDIA_ARTIST] = info["artist"]
-        mapped[Attributes.MEDIA_ALBUM] = info.get("album", "")
+            pass
+
+    def is_spotify_device(self, device_name: str) -> bool:
+        """Whether a Spotify Connect device name refers to this speaker."""
+        n = self._name.lower()
+        d = (device_name or "").lower()
+        return bool(d) and (d in n or n in d)
+
+    def apply_now_playing(self, info: Dict[str, Any]) -> None:
+        """Update the card from a Spotify now-playing snapshot (poll or push)."""
+        mapped: Dict[str, Any] = {
+            Attributes.SOURCE: "Spotify Connect" if "Spotify Connect" in self._source_ids else "Spotify",
+            Attributes.STATE: States.PLAYING if info.get("is_playing", True) else States.PAUSED,
+            Attributes.MEDIA_TITLE: info.get("title", ""),
+            Attributes.MEDIA_ARTIST: info.get("artist", ""),
+            Attributes.MEDIA_ALBUM: info.get("album", ""),
+        }
+        if "position" in info:
+            mapped[Attributes.MEDIA_POSITION] = info["position"]
+        if "duration" in info:
+            mapped[Attributes.MEDIA_DURATION] = info["duration"]
         if info.get("image_url"):
             mapped[Attributes.MEDIA_IMAGE_URL] = info["image_url"]
         self._update(mapped)
