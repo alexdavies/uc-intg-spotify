@@ -154,6 +154,20 @@ class SpotifyClient:
                 out.append({"name": item.get("name", "Unknown"), "uri": item["uri"]})
         return out
 
+    async def get_now_playing(self) -> Optional[Dict[str, str]]:
+        """Current track's title/artist/album/art from Spotify (authoritative)."""
+        d = await self._request("GET", "/me/player")
+        item = (d or {}).get("item")
+        if not item:
+            return None
+        images = (item.get("album") or {}).get("images") or []
+        return {
+            "title": item.get("name", ""),
+            "artist": ", ".join(a["name"] for a in item.get("artists", [])),
+            "album": (item.get("album") or {}).get("name", ""),
+            "image_url": images[0]["url"] if images else "",
+        }
+
     async def get_devices(self) -> List[Dict[str, Any]]:
         data = await self._request("GET", "/me/player/devices")
         devices = (data or {}).get("devices", [])
