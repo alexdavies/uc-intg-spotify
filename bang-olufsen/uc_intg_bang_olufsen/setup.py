@@ -166,10 +166,17 @@ class BeoSetup:
         auth_input = (msg.input_values.get("auth_code") or "").strip()
         if not auth_input:
             return ucapi.SetupError(ucapi.IntegrationSetupError.OTHER)
+        # Accept a raw code, "code=...", or a full redirect URL; always drop any
+        # trailing query params (e.g. &ubi=...) that Spotify appends.
         code = auth_input
-        if "code=" in auth_input:
-            code = auth_input.split("code=", 1)[1].split("&")[0]
-        ok = await SpotifyClient(self._config).exchange_code_for_token(code)
+        if "code=" in code:
+            code = code.split("code=", 1)[1]
+        code = code.split("&")[0].split("#")[0].strip()
+        client = SpotifyClient(self._config)
+        try:
+            ok = await client.exchange_code_for_token(code)
+        finally:
+            await client.close()
         if not ok:
             _LOG.error("Spotify token exchange failed")
             return ucapi.SetupError(ucapi.IntegrationSetupError.AUTHORIZATION_ERROR)

@@ -34,6 +34,9 @@ SCOPES = [
     "user-modify-playback-state",
     "playlist-read-private",
     "playlist-read-collaborative",
+    "user-top-read",
+    "playlist-modify-private",
+    "playlist-modify-public",
 ]
 
 
