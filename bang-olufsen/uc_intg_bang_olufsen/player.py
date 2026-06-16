@@ -25,18 +25,23 @@ _LOG = logging.getLogger(__name__)
 # Prefix marking radio stations in the source list.
 RADIO_PREFIX = "Radio: "
 
+# Physical inputs worth keeping in the source picker; the rest of the speaker's
+# reported sources (streamers, Bluetooth, tone generator, ...) are dropped.
+_KEEP_INPUTS = ("line", "optical")
+
 
 class BeoPlayer:
     """One media player entity for a single speaker."""
 
     def __init__(self, api: ucapi.IntegrationAPI, speaker: Dict[str, Any],
                  radio_stations: Optional[List[Dict[str, str]]] = None,
-                 spotify=None):
+                 spotify=None, playlists: Optional[List[Dict[str, str]]] = None):
         """
         Args:
             speaker: {serial, name, client, sources}.
             radio_stations: custom cast radio list [{name, url, content_type}].
             spotify: optional shared SpotifyClient for playlist playback.
+            playlists: curated Spotify playlists [{name, uri}].
         """
         self._api = api
         self._client = speaker["client"]
@@ -44,13 +49,16 @@ class BeoPlayer:
         self._name = speaker.get("name") or self._serial
         self._spotify = spotify
 
-        # Native input sources (Spotify, Line-In, ...): name -> id.
-        self._source_ids: Dict[str, str] = {
-            src["name"]: src["id"] for src in speaker.get("sources", [])
-        }
-        # Custom radio list, played by casting a stream URL: "Radio: X" -> station.
+        # The source picker should be the things you actually pick: radio,
+        # playlists, and the physical inputs — not the long list of streaming/
+        # system "sources" the speaker reports (Bluetooth, Tone Generator, ...).
         self._radio: Dict[str, Dict[str, str]] = {
             f"{RADIO_PREFIX}{s['name']}": s for s in (radio_stations or [])
+        }
+        self._playlists: Dict[str, str] = {p["name"]: p["uri"] for p in (playlists or [])}
+        self._source_ids: Dict[str, str] = {
+            src["name"]: src["id"] for src in speaker.get("sources", [])
+            if any(k in (src["name"] or "").lower() for k in _KEEP_INPUTS)
         }
         self._cast = BeoCast(self._client.host, self._name)
         # Last known power state (Mozart reports it); used to ignore the
@@ -157,6 +165,8 @@ class BeoPlayer:
                     Attributes.STATE: States.PLAYING,
                 })
             return _status(ok)
+        if source in self._playlists:
+            return _status(await self.play_spotify_playlist(self._playlists[source], source))
         if source in self._source_ids:
             ok = await self._client.set_source(self._source_ids[source])
             if ok:
@@ -269,7 +279,7 @@ class BeoPlayer:
     # ----- helpers ---------------------------------------------------------
 
     def _source_list(self) -> List[str]:
-        return list(self._source_ids) + list(self._radio)
+        return list(self._radio) + list(self._playlists) + list(self._source_ids)
 
     def close(self) -> None:
         """Release the Chromecast connection (called on shutdown)."""

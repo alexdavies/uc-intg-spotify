@@ -105,12 +105,12 @@ async def cmd_selftest(_args) -> int:
         from uc_intg_bang_olufsen.player import BeoPlayer
         speaker = {
             "serial": "TEST", "name": "Test Speaker", "client": c,
-            "sources": [{"id": "spotify", "name": "Spotify"}],
+            "sources": [{"id": "lineIn", "name": "Line-In"}],
         }
         stations = [{"name": "Radio One", "url": "http://example/stream", "content_type": "audio/mpeg"}]
-        player = BeoPlayer(api, speaker, stations)
+        player = BeoPlayer(api, speaker, stations, None, [{"name": "My Mix", "uri": "spotify:playlist:1"}])
         src = player.entity.attributes["source_list"]
-        assert "Spotify" in src and "Radio: Radio One" in src
+        assert "Radio: Radio One" in src and "My Mix" in src and "Line-In" in src
         assert player.entity.id == "beo_player_TEST"
         from uc_intg_bang_olufsen.remote import BeoRemote
         rem = BeoRemote(api, player, "Test Speaker", "TEST", stations)

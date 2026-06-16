@@ -118,7 +118,7 @@ async def on_setup_complete():
             "client": client,
             "sources": await client.get_sources(),
         }
-        player = BeoPlayer(api, speaker, radio_stations, spotify)
+        player = BeoPlayer(api, speaker, radio_stations, spotify, playlists)
         players[player.entity.id] = player
         api.available_entities.add(player.entity)
         built.append((player, serial, speaker["name"]))

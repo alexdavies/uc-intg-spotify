@@ -87,33 +87,48 @@ def test_get_presets_maps_ids():
     ]
 
 
-def _player_for(name, serial, sources, radio_stations=None):
+def _player_for(name, serial, sources, radio_stations=None, playlists=None, spotify=None):
     """A single-speaker BeoPlayer with a mocked client and UC API."""
     api = MagicMock()
     client = _make_client()
     client.name = name
     speaker = {"serial": serial, "name": name, "client": client, "sources": sources}
-    return api, BeoPlayer(api, speaker, radio_stations or []), client
+    return api, BeoPlayer(api, speaker, radio_stations or [], spotify, playlists or []), client
 
 
-def test_player_exposes_own_sources_and_radio_stations():
+def test_picker_has_radio_playlists_and_keeps_only_physical_inputs():
     api, player, client = _player_for(
         "Beosound Emerge", "EMERGE",
-        [{"id": "spotify", "name": "Spotify"}],
-        [{"name": "triple j", "url": "http://x/aac", "content_type": "audio/aac"}])
-    assert player.entity.id == "beo_player_EMERGE"
+        [{"id": "spotify", "name": "Spotify Connect"}, {"id": "bluetooth", "name": "Bluetooth"},
+         {"id": "lineIn", "name": "Line-In"}, {"id": "spdif", "name": "Optical"}],
+        [{"name": "triple j", "url": "http://x/aac", "content_type": "audio/aac"}],
+        [{"name": "Kitchen Disco", "uri": "spotify:playlist:1"}])
     src = player.entity.attributes["source_list"]
-    assert "Spotify" in src and f"{RADIO_PREFIX}triple j" in src
-    # Per-speaker player has no output/sound-mode selector.
+    assert f"{RADIO_PREFIX}triple j" in src      # radio
+    assert "Kitchen Disco" in src                # playlist
+    assert "Line-In" in src and "Optical" in src  # physical inputs kept
+    assert "Spotify Connect" not in src and "Bluetooth" not in src  # noise dropped
     assert "sound_mode_list" not in player.entity.attributes
 
 
 def test_player_select_native_source_routes_to_client():
     api, player, client = _player_for(
-        "Beosound Emerge", "EMERGE", [{"id": "spotify", "name": "Spotify"}])
+        "Beosound Emerge", "EMERGE", [{"id": "lineIn", "name": "Line-In"}])
     client.set_source = AsyncMock(return_value=True)
-    asyncio.run(player._select_source({"source": "Spotify"}))
-    client.set_source.assert_awaited_once_with("spotify")
+    asyncio.run(player._select_source({"source": "Line-In"}))
+    client.set_source.assert_awaited_once_with("lineIn")
+
+
+def test_player_select_playlist_from_picker_plays_spotify():
+    spot = MagicMock()
+    spot.cached_device_id = MagicMock(return_value="dev1")
+    spot.start_playlist = AsyncMock(return_value=True)
+    api, player, client = _player_for(
+        "Davies9", "A9", [], None,
+        [{"name": "Kitchen Disco", "uri": "spotify:playlist:1"}], spot)
+    rc = asyncio.run(player._select_source({"source": "Kitchen Disco"}))
+    spot.start_playlist.assert_awaited_once_with("spotify:playlist:1", "dev1")
+    assert rc == ucapi.StatusCodes.OK
 
 
 def test_player_select_radio_casts_stream_url():
