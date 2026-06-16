@@ -79,6 +79,7 @@ class BeoClient:
         self._client.get_playback_progress_notifications(self._on_progress)
         self._client.get_volume_notifications(self._on_volume)
         self._client.get_source_change_notifications(self._on_source)
+        self._client.get_power_state_notifications(self._on_power)
 
         try:
             await self._client.connect_notifications(reconnect=True)
@@ -332,6 +333,11 @@ class BeoClient:
     async def _on_source(self, source) -> None:
         if getattr(source, "id", None):
             await self._emit({"source_id": source.id, "source_name": source.name})
+
+    async def _on_power(self, notification) -> None:
+        value = getattr(notification, "value", None)
+        if value is not None:
+            await self._emit({"on": value == "on"})
 
     def _volume_to_attrs(self, volume) -> Dict[str, Any]:
         # Mozart wraps each value in a sub-object: VolumeState.level is a

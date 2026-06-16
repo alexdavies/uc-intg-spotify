@@ -142,6 +142,23 @@ def test_player_push_updates_entity():
     api.configured_entities.update_attributes.assert_called_once()
 
 
+def test_player_ignores_mirrored_metadata_when_off():
+    from ucapi.media_player import States
+    api, player, client = _player_for(
+        "Alex's Emerge", "E", [{"id": "spotify", "name": "Spotify Connect"}])
+    # Off + a mirrored now-playing (B&O shares it across speakers) -> stays empty.
+    asyncio.run(player._apply({"on": False}))
+    asyncio.run(player._apply({"title": "Mirror", "artist": "X", "image_url": "http://x"}))
+    assert player.entity.attributes["media_title"] == ""
+    assert player.entity.attributes["media_image_url"] == ""
+    assert player.entity.attributes["state"] == States.OFF
+    # Powers on and plays its own track -> shows it.
+    asyncio.run(player._apply({"on": True}))
+    asyncio.run(player._apply({"playing": True, "title": "Real", "image_url": "http://y"}))
+    assert player.entity.attributes["media_title"] == "Real"
+    assert player.entity.attributes["state"] == States.PLAYING
+
+
 def test_player_entity_id_is_sanitised():
     api, player, client = _player_for("X", "3071.1200530@products", [])
     assert player.entity.id == "beo_player_3071_1200530_products"

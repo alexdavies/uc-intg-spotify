@@ -53,6 +53,9 @@ class BeoPlayer:
             f"{RADIO_PREFIX}{s['name']}": s for s in (radio_stations or [])
         }
         self._cast = BeoCast(self._client.host, self._name)
+        # Last known power state (Mozart reports it); used to ignore the
+        # now-playing metadata B&O mirrors from other speakers while this one is off.
+        self._powered: Optional[bool] = None
 
         # This speaker's push updates flow straight to this entity.
         self._client.on_update = self._on_update
@@ -274,7 +277,9 @@ class BeoPlayer:
     async def _apply(self, attrs: Dict[str, Any]) -> None:
         """Translate a state dict from the client into entity attributes."""
         mapped: Dict[str, Any] = {}
-        if "playing" in attrs:
+        if attrs.get("on") is not None:
+            self._powered = attrs["on"]
+        if "playing" in attrs and self._powered is not False:
             mapped[Attributes.STATE] = States.PLAYING if attrs["playing"] else States.PAUSED
         if attrs.get("on") is False:
             mapped[Attributes.STATE] = States.OFF
@@ -282,20 +287,30 @@ class BeoPlayer:
             mapped[Attributes.VOLUME] = attrs["volume"]
         if "muted" in attrs:
             mapped[Attributes.MUTED] = attrs["muted"]
-        if "title" in attrs:
-            mapped[Attributes.MEDIA_TITLE] = attrs["title"]
-        if "artist" in attrs:
-            mapped[Attributes.MEDIA_ARTIST] = attrs["artist"]
-        if "album" in attrs:
-            mapped[Attributes.MEDIA_ALBUM] = attrs["album"]
-        if "duration" in attrs:
-            mapped[Attributes.MEDIA_DURATION] = attrs["duration"]
-        if "position" in attrs:
-            mapped[Attributes.MEDIA_POSITION] = attrs["position"]
-        if "image_url" in attrs:
-            mapped[Attributes.MEDIA_IMAGE_URL] = attrs["image_url"]
         if attrs.get("source_name"):
             mapped[Attributes.SOURCE] = attrs["source_name"]
+
+        if self._powered is False:
+            # Speaker is off. B&O mirrors other speakers' now-playing over the
+            # network, so ignore that metadata and keep this card empty.
+            mapped.update({
+                Attributes.MEDIA_TITLE: "", Attributes.MEDIA_ARTIST: "",
+                Attributes.MEDIA_ALBUM: "", Attributes.MEDIA_IMAGE_URL: "",
+                Attributes.MEDIA_POSITION: 0, Attributes.MEDIA_DURATION: 0,
+            })
+        else:
+            if "title" in attrs:
+                mapped[Attributes.MEDIA_TITLE] = attrs["title"]
+            if "artist" in attrs:
+                mapped[Attributes.MEDIA_ARTIST] = attrs["artist"]
+            if "album" in attrs:
+                mapped[Attributes.MEDIA_ALBUM] = attrs["album"]
+            if "duration" in attrs:
+                mapped[Attributes.MEDIA_DURATION] = attrs["duration"]
+            if "position" in attrs:
+                mapped[Attributes.MEDIA_POSITION] = attrs["position"]
+            if "image_url" in attrs:
+                mapped[Attributes.MEDIA_IMAGE_URL] = attrs["image_url"]
         self._update(mapped)
 
     def _update(self, attrs: Dict[str, Any]) -> None:
