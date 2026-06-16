@@ -19,11 +19,9 @@ _LOG = logging.getLogger(__name__)
 # (the B&O radio API can't be driven locally — see API_NOTES.md). Editable in
 # config.json under "radio_stations"; these are the seeded defaults.
 DEFAULT_RADIO_STATIONS: List[Dict[str, str]] = [
-    {"name": "BBC Radio 2", "url": "https://lsn.lv/bbcradio.m3u8?station=bbc_radio_two&bitrate=320000", "content_type": "application/x-mpegurl", "image": "https://static.airable.io/29/89/434227.png"},
-    {"name": "BBC Radio 4", "url": "https://lsn.lv/bbcradio.m3u8?station=bbc_radio_fourfm&bitrate=320000", "content_type": "application/x-mpegurl", "image": "https://static.airable.io/69/74/972558.png"},
-    {"name": "BBC Radio 6 Music", "url": "https://lsn.lv/bbcradio.m3u8?station=bbc_6music&bitrate=320000", "content_type": "application/x-mpegurl", "image": "https://static.airable.io/49/42/159641.png"},
     {"name": "triple j", "url": "https://live-radio01.mediahubaustralia.com/2TJW/aac/", "content_type": "audio/aac", "image": "https://static.airable.io/15/36/215005.png"},
     {"name": "Energy Zürich", "url": "https://energyzuerich.ice.infomaniak.ch/energyzuerich-high.mp3", "content_type": "audio/mpeg", "image": "https://static.airable.io/74/24/436752.png"},
+    {"name": "Classic FM", "url": "https://media-ssl.musicradio.com/ClassicFMMP3", "content_type": "audio/mpeg", "image": "https://static.airable.io/05/49/143222.png"},
 ]
 
 

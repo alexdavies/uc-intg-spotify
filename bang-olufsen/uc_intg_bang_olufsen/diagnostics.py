@@ -110,7 +110,7 @@ async def cmd_selftest(_args) -> int:
         stations = [{"name": "Radio One", "url": "http://example/stream", "content_type": "audio/mpeg"}]
         player = BeoPlayer(api, speaker, stations, None, [{"name": "My Mix", "uri": "spotify:playlist:1"}])
         src = player.entity.attributes["source_list"]
-        assert "Radio: Radio One" in src and "My Mix" in src and "Line-In" in src
+        assert "Radio: Radio One" in src and "My Mix" in src
         assert player.entity.id == "beo_player_TEST"
         from uc_intg_bang_olufsen.remote import BeoRemote
         rem = BeoRemote(api, player, "Test Speaker", "TEST", stations)

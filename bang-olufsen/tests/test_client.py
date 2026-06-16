@@ -96,24 +96,23 @@ def _player_for(name, serial, sources, radio_stations=None, playlists=None, spot
     return api, BeoPlayer(api, speaker, radio_stations or [], spotify, playlists or []), client
 
 
-def test_picker_has_radio_playlists_and_keeps_only_physical_inputs():
+def test_picker_has_radio_and_playlists_no_raw_inputs():
     api, player, client = _player_for(
         "Beosound Emerge", "EMERGE",
         [{"id": "spotify", "name": "Spotify Connect"}, {"id": "bluetooth", "name": "Bluetooth"},
-         {"id": "lineIn", "name": "Line-In"}, {"id": "spdif", "name": "Optical"}],
+         {"id": "lineIn", "name": "Line-In"}],
         [{"name": "triple j", "url": "http://x/aac", "content_type": "audio/aac"}],
         [{"name": "Kitchen Disco", "uri": "spotify:playlist:1"}])
     src = player.entity.attributes["source_list"]
-    assert f"{RADIO_PREFIX}triple j" in src      # radio
-    assert "Kitchen Disco" in src                # playlist
-    assert "Line-In" in src and "Optical" in src  # physical inputs kept
-    assert "Spotify Connect" not in src and "Bluetooth" not in src  # noise dropped
+    assert f"{RADIO_PREFIX}triple j" in src and "Kitchen Disco" in src
+    # Raw inputs are dropped (picker is radio + playlists only by default).
+    assert "Spotify Connect" not in src and "Bluetooth" not in src and "Line-In" not in src
     assert "sound_mode_list" not in player.entity.attributes
 
 
 def test_player_select_native_source_routes_to_client():
-    api, player, client = _player_for(
-        "Beosound Emerge", "EMERGE", [{"id": "lineIn", "name": "Line-In"}])
+    api, player, client = _player_for("Beosound Emerge", "EMERGE", [])
+    player._source_ids = {"Line-In": "lineIn"}  # inputs are filtered out by default; inject one
     client.set_source = AsyncMock(return_value=True)
     asyncio.run(player._select_source({"source": "Line-In"}))
     client.set_source.assert_awaited_once_with("lineIn")

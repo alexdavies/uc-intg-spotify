@@ -25,9 +25,9 @@ _LOG = logging.getLogger(__name__)
 # Prefix marking radio stations in the source list.
 RADIO_PREFIX = "Radio: "
 
-# Physical inputs worth keeping in the source picker; the rest of the speaker's
-# reported sources (streamers, Bluetooth, tone generator, ...) are dropped.
-_KEEP_INPUTS = ("line", "optical")
+# Physical inputs to keep in the source picker (match by name substring). Empty
+# = picker shows only radio + playlists. Add e.g. "line", "optical" to include them.
+_KEEP_INPUTS: tuple = ()
 
 
 class BeoPlayer:
