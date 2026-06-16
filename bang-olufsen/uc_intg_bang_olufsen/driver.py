@@ -63,11 +63,21 @@ async def on_setup_complete():
     playlists: List[dict] = []
     if config.spotify_is_configured():
         spotify = SpotifyClient(config)
-        playlists = await spotify.get_playlists(config.get_playlist_limit())
+        # When curated (prefixed) playlists exist, show only those, with the
+        # marker stripped from the label; otherwise fall back to all.
+        all_playlists = await spotify.get_playlists(50)
+        prefix = config.get_playlist_prefix()
+        curated = [p for p in all_playlists if p["name"].lstrip().startswith(prefix)]
+        chosen = curated or all_playlists
+        playlists = [
+            {"name": (p["name"].lstrip()[len(prefix):].strip() or p["name"]) if curated else p["name"],
+             "uri": p["uri"]}
+            for p in chosen
+        ][:config.get_playlist_limit()]
         # Pre-warm the Connect device cache so the first playlist tap can target
         # the speaker directly without a live device lookup.
         await spotify.get_devices()
-        _LOG.info("Spotify enabled: %d playlist(s)", len(playlists))
+        _LOG.info("Spotify enabled: %d playlist(s) shown (%d curated)", len(playlists), len(curated))
 
     for device in devices:
         serial = device.get("serial") or device.get("host")

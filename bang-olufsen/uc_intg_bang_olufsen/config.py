@@ -130,6 +130,11 @@ class BeoConfig:
     def get_playlist_limit(self) -> int:
         return int(self._data.get("spotify_playlist_limit", 12))
 
+    def get_playlist_prefix(self) -> str:
+        """Marker prefix for curated playlists; when any exist, only these are
+        shown on the remote (and the marker is stripped from the button label)."""
+        return self._data.get("spotify_playlist_prefix", "◆")
+
     def reset(self) -> bool:
         self._data = {"devices": []}
         return self._save()
