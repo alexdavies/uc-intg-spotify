@@ -9,8 +9,6 @@ name: "Build Bang & Olufsen Integration"
   push:
     tags:
       - 'bo-v*'
-    paths:
-      - 'bang-olufsen/**'
 
 env:
   INTG_DIR: bang-olufsen
@@ -52,6 +50,8 @@ jobs:
                 --collect-all certifi \
                 --collect-all pydantic \
                 --collect-all pydantic_core \
+                --collect-all pychromecast \
+                --collect-all casttube \
                 uc_intg_bang_olufsen/driver.py"
 
       - name: Assemble archive
