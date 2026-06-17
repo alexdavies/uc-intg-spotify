@@ -2,3 +2,6 @@
 .python-version
 __pycache__/
 *.pyc
+
+# SpotAPI web session (sensitive: account access) — never commit
+.spotapi_session.json

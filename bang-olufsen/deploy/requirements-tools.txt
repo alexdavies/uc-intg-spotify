@@ -1,0 +1,5 @@
+# Extra deps for deploy/build_playlist.py only (curated-playlist writes via SpotAPI).
+# Not needed by the integration runtime.
+spotapi
+pymongo
+redis
