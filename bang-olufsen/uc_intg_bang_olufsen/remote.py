@@ -1,9 +1,15 @@
 """
-Remote entity for a single Bang & Olufsen Mozart speaker.
+Per-speaker companion remote entity — the on-screen "control" surface.
 
-Exposes transport controls, one button per radio favourite (preset), and
-Beolink multiroom actions ("play on <peer>", "leave") as both UI buttons and
-simple commands usable in activities and macros.
+Each speaker gets, alongside its media-player ("now playing" view), a remote
+entity with tappable button pages:
+
+- "Controls": transport + volume.
+- "Radio": one button per custom radio station (casts it).
+
+Every button delegates to the speaker's ``BeoPlayer`` (via its media-player
+command handler), so the media-player view and this remote stay in sync. Buttons
+are also exposed as simple commands for activities/macros.
 
 :copyright: (c) 2024
 :license: MPL-2.0, see LICENSE for more details.
@@ -11,175 +17,157 @@ simple commands usable in activities and macros.
 
 import logging
 import re
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import ucapi
+from ucapi.media_player import Commands as MpCommands
 from ucapi.remote import Commands, Features, States
 from ucapi.ui import Size, create_ui_icon, create_ui_text, UiPage
 
-from uc_intg_bang_olufsen.client import BeoClient
+from uc_intg_bang_olufsen.player import RADIO_PREFIX, _entity_id
 
 _LOG = logging.getLogger(__name__)
 
-MAX_PRESET_BUTTONS = 12
+_TRANSPORT = {
+    "PLAY_PAUSE": MpCommands.PLAY_PAUSE,
+    "NEXT": MpCommands.NEXT,
+    "PREVIOUS": MpCommands.PREVIOUS,
+    "STOP": MpCommands.STOP,
+    "VOLUME_UP": MpCommands.VOLUME_UP,
+    "VOLUME_DOWN": MpCommands.VOLUME_DOWN,
+}
 
-# Resolver returns the Beolink JID for a peer serial, or None.
-JidResolver = Callable[[str], Awaitable[Optional[str]]]
 
-
-def _simple_command(name: str, prefix: str, existing: set) -> str:
+def _cmd(name: str, prefix: str, existing: set) -> str:
     base = re.sub(r"[^A-Z0-9]+", "_", name.upper()).strip("_")
     base = f"{prefix}_{base}"[:20].rstrip("_") or prefix
-    command = base
-    suffix = 2
+    command, n = base, 2
     while command in existing:
-        command = f"{base[:17]}_{suffix}"
-        suffix += 1
+        command = f"{base[:17]}_{n}"
+        n += 1
     existing.add(command)
     return command
 
 
 class BeoRemote:
-    """A remote entity backed by one Mozart speaker."""
+    """Button-page remote for a single speaker, delegating to its BeoPlayer."""
 
-    def __init__(self, api: ucapi.IntegrationAPI, client: BeoClient,
-                 presets: Optional[List[Dict[str, Any]]] = None,
-                 peers: Optional[List[Dict[str, str]]] = None,
-                 resolve_jid: Optional[JidResolver] = None):
+    def __init__(self, api: ucapi.IntegrationAPI, player, name: str, serial: str,
+                 radio_stations: Optional[List[Dict[str, str]]] = None,
+                 playlists: Optional[List[Dict[str, str]]] = None):
         self._api = api
-        self._client = client
-        self._resolve_jid = resolve_jid
-        # command -> ("preset", int) | ("expand", peer_serial) | ("leave", None)
-        self._actions: Dict[str, tuple] = {}
+        self._player = player
+        self._name = name
 
-        existing = set(["PLAY_PAUSE", "NEXT", "PREVIOUS", "STOP", "VOLUME_UP", "VOLUME_DOWN"])
-        simple_commands = list(existing)
+        existing = set(_TRANSPORT)
+        simple_commands = list(_TRANSPORT)
 
-        self._preset_buttons: List[tuple] = []
-        for preset in (presets or [])[:MAX_PRESET_BUTTONS]:
-            cmd = _simple_command(preset["name"], "RADIO", existing)
-            self._actions[cmd] = ("preset", preset["id"])
-            self._preset_buttons.append((cmd, preset["name"]))
-            simple_commands.append(cmd)
+        # Radio buttons -> command : source name ("Radio: <station>").
+        self._radio_cmds: Dict[str, str] = {}
+        self._radio_buttons: List[tuple] = []
+        for station in (radio_stations or []):
+            c = _cmd(station["name"], "RADIO", existing)
+            self._radio_cmds[c] = f"{RADIO_PREFIX}{station['name']}"
+            self._radio_buttons.append((c, station["name"]))
+            simple_commands.append(c)
 
-        self._peer_buttons: List[tuple] = []
-        for peer in (peers or []):
-            cmd = _simple_command(peer["name"], "PLAYON", existing)
-            self._actions[cmd] = ("expand", peer["serial"])
-            self._peer_buttons.append((cmd, f"Play on {peer['name']}"))
-            simple_commands.append(cmd)
-        if self._peer_buttons:
-            self._actions["BEOLINK_LEAVE"] = ("leave", None)
-            simple_commands.append("BEOLINK_LEAVE")
+        # Spotify playlist buttons -> command : (uri, name).
+        self._playlist_cmds: Dict[str, tuple] = {}
+        self._playlist_buttons: List[tuple] = []
+        for pl in (playlists or []):
+            c = _cmd(pl["name"], "SPOT", existing)
+            self._playlist_cmds[c] = (pl["uri"], pl["name"])
+            self._playlist_buttons.append((c, pl["name"]))
+            simple_commands.append(c)
 
-        identifier = f"beo_remote_{_slug(client.serial or client.host)}"
+        # Multiroom (Beolink) — only when there's another speaker to group with.
+        self._multiroom = player.has_multiroom
+        if self._multiroom:
+            simple_commands += ["JOIN_GROUP", "LEAVE_GROUP"]
+
         self.entity = ucapi.Remote(
-            identifier=identifier,
-            name={"en": f"{client.name} Remote"},
+            identifier="beo_remote_" + _entity_id(serial)[len("beo_player_"):],
+            name={"en": f"{name} Controls"},
             features=[Features.ON_OFF, Features.SEND_CMD],
             attributes={"state": States.ON},
             simple_commands=simple_commands,
-            ui_pages=self._create_ui_pages(),
+            ui_pages=self._pages(),
             cmd_handler=self.cmd_handler,
         )
-        _LOG.info("Created remote entity for %s", client.name)
+        _LOG.info("Created B&O remote '%s Controls' (%d radio, %d playlist buttons)",
+                  name, len(self._radio_buttons), len(self._playlist_buttons))
 
-    def _create_ui_pages(self) -> List[UiPage]:
-        pages = []
-        main = UiPage(page_id="main", name="Controls", grid=Size(4, 6))
-        main.add(create_ui_icon("uc:play-pause", 1, 0, Size(2, 1), "PLAY_PAUSE"))
-        main.add(create_ui_icon("uc:backward", 0, 1, Size(1, 1), "PREVIOUS"))
-        main.add(create_ui_icon("uc:forward", 3, 1, Size(1, 1), "NEXT"))
-        main.add(create_ui_icon("uc:stop", 1, 2, Size(2, 1), "STOP"))
-        main.add(create_ui_icon("uc:volume-high", 1, 3, Size(1, 1), "VOLUME_UP"))
-        main.add(create_ui_icon("uc:volume-low", 2, 3, Size(1, 1), "VOLUME_DOWN"))
-        pages.append(main)
-
-        pages.extend(_button_pages(self._preset_buttons, "radio", "Radio"))
-        pages.extend(_button_pages(self._peer_buttons + ([("BEOLINK_LEAVE", "Leave multiroom")] if self._peer_buttons else []), "multiroom", "Multiroom"))
+    def _pages(self) -> List[UiPage]:
+        controls = UiPage(page_id="controls", name="Controls", grid=Size(4, 6))
+        controls.add(create_ui_icon("uc:play-pause", 1, 0, Size(2, 1), "PLAY_PAUSE"))
+        controls.add(create_ui_icon("uc:backward", 0, 1, Size(1, 1), "PREVIOUS"))
+        controls.add(create_ui_icon("uc:forward", 3, 1, Size(1, 1), "NEXT"))
+        controls.add(create_ui_icon("uc:stop", 1, 2, Size(2, 1), "STOP"))
+        controls.add(create_ui_icon("uc:volume-high", 1, 3, Size(1, 1), "VOLUME_UP"))
+        controls.add(create_ui_icon("uc:volume-low", 2, 3, Size(1, 1), "VOLUME_DOWN"))
+        pages = [controls]
+        pages.extend(_button_pages(self._radio_buttons, "radio", "Radio"))
+        pages.extend(_button_pages(self._playlist_buttons, "spotify", "Spotify"))
+        if self._multiroom:
+            mr = UiPage(page_id="multiroom", name="Multiroom", grid=Size(4, 6))
+            mr.add(create_ui_text(f"Play with {self._player.other_name}", 0, 0, Size(4, 1), "JOIN_GROUP"))
+            mr.add(create_ui_text("Stop multiroom", 0, 2, Size(4, 1), "LEAVE_GROUP"))
+            pages.append(mr)
         return pages
 
-    async def cmd_handler(self, entity: ucapi.Entity, cmd_id: str, params: dict[str, Any] | None) -> ucapi.StatusCodes:
-        _LOG.info("[%s remote] %s %s", self._client.name, cmd_id, params)
+    async def cmd_handler(self, entity, cmd_id: str, params: dict[str, Any] | None) -> ucapi.StatusCodes:
         try:
             if cmd_id == Commands.ON:
+                await self._player.cmd_handler(self._player.entity, MpCommands.ON, None)
                 self._api.configured_entities.update_attributes(self.entity.id, {"state": States.ON})
                 return ucapi.StatusCodes.OK
             if cmd_id == Commands.OFF:
+                await self._player.cmd_handler(self._player.entity, MpCommands.OFF, None)
                 self._api.configured_entities.update_attributes(self.entity.id, {"state": States.OFF})
                 return ucapi.StatusCodes.OK
             if cmd_id == Commands.SEND_CMD:
                 return await self._send(params)
             return ucapi.StatusCodes.NOT_IMPLEMENTED
-        except Exception as e:
-            _LOG.error("Error in remote handler for %s: %s", self._client.name, e)
+        except Exception as e:  # noqa: BLE001
+            _LOG.error("[%s] remote command error: %s", self._name, e)
             return ucapi.StatusCodes.SERVER_ERROR
 
     async def _send(self, params: dict[str, Any] | None) -> ucapi.StatusCodes:
         if not params or "command" not in params:
             return ucapi.StatusCodes.BAD_REQUEST
         command = params["command"]
-
-        if command in self._actions:
-            return await self._run_action(*self._actions[command])
-
-        fixed = {
-            "PLAY_PAUSE": self._play_pause,
-            "NEXT": self._client.next_track,
-            "PREVIOUS": self._client.previous_track,
-            "STOP": self._client.stop,
-            "VOLUME_UP": lambda: self._nudge(5),
-            "VOLUME_DOWN": lambda: self._nudge(-5),
-        }
-        if command in fixed:
-            return _status(await fixed[command]())
-        _LOG.warning("Unknown remote command: %s", command)
+        # All actions go through the player's media-player handler so the player
+        # view and this remote stay in sync.
+        if command in self._radio_cmds:
+            return await self._player.cmd_handler(
+                self._player.entity, MpCommands.SELECT_SOURCE,
+                {"source": self._radio_cmds[command]},
+            )
+        if command in self._playlist_cmds:
+            uri, plname = self._playlist_cmds[command]
+            ok = await self._player.play_spotify_playlist(uri, plname)
+            return ucapi.StatusCodes.OK if ok else ucapi.StatusCodes.SERVER_ERROR
+        if command == "JOIN_GROUP":
+            ok = await self._player.join_multiroom()
+            return ucapi.StatusCodes.OK if ok else ucapi.StatusCodes.SERVER_ERROR
+        if command == "LEAVE_GROUP":
+            ok = await self._player.leave_multiroom()
+            return ucapi.StatusCodes.OK if ok else ucapi.StatusCodes.SERVER_ERROR
+        if command in _TRANSPORT:
+            return await self._player.cmd_handler(self._player.entity, _TRANSPORT[command], None)
+        _LOG.warning("[%s] unknown remote command: %s", self._name, command)
         return ucapi.StatusCodes.NOT_IMPLEMENTED
-
-    async def _run_action(self, kind: str, target) -> ucapi.StatusCodes:
-        if kind == "preset":
-            return _status(await self._client.activate_preset(target))
-        if kind == "leave":
-            return _status(await self._client.beolink_leave())
-        if kind == "expand":
-            if not self._resolve_jid:
-                return ucapi.StatusCodes.NOT_IMPLEMENTED
-            jid = await self._resolve_jid(target)
-            if not jid:
-                _LOG.warning("Could not resolve Beolink JID for peer %s", target)
-                return ucapi.StatusCodes.SERVER_ERROR
-            return _status(await self._client.beolink_expand(jid))
-        return ucapi.StatusCodes.NOT_IMPLEMENTED
-
-    async def _play_pause(self) -> bool:
-        # The remote has no cached transport state; toggle via play then pause is
-        # not possible, so default to play (resumes/wakes). Pause is available
-        # through the media player entity.
-        return await self._client.play()
-
-    async def _nudge(self, delta: int) -> bool:
-        snapshot = await self._client.get_state()
-        current = snapshot.get("volume", 0)
-        return await self._client.set_volume(max(0, min(100, current + delta)))
 
 
 def _button_pages(buttons: List[tuple], page_id: str, page_name: str) -> List[UiPage]:
     pages = []
     per_page = 6
-    for index in range(0, len(buttons), per_page):
-        chunk = buttons[index:index + per_page]
-        number = index // per_page + 1
+    for i in range(0, len(buttons), per_page):
+        chunk = buttons[i:i + per_page]
+        number = i // per_page + 1
         name = page_name if number == 1 else f"{page_name} {number}"
         page = UiPage(page_id=f"{page_id}_{number}", name=name, grid=Size(4, 6))
         for row, (command, label) in enumerate(chunk):
             page.add(create_ui_text(label, 0, row, Size(4, 1), command))
         pages.append(page)
     return pages
-
-
-def _status(ok: bool) -> ucapi.StatusCodes:
-    return ucapi.StatusCodes.OK if ok else ucapi.StatusCodes.SERVER_ERROR
-
-
-def _slug(value: str) -> str:
-    return "".join(c if c.isalnum() else "_" for c in value).strip("_").lower()

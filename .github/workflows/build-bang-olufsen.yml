@@ -1,0 +1,83 @@
+# Builds the Bang & Olufsen integration into an installable aarch64 .tar.gz
+# for the Unfolded Circle Remote. Run manually from the Actions tab
+# (workflow_dispatch) and download the artifact, or push a 'bo-v*' tag to also
+# create a release.
+name: "Build Bang & Olufsen Integration"
+
+"on":
+  workflow_dispatch:
+  push:
+    tags:
+      - 'bo-v*'
+
+env:
+  INTG_DIR: bang-olufsen
+  DRIVER_ID: bang_olufsen_local
+  # Builder image; see https://hub.docker.com/r/unfoldedcircle/r2-pyinstaller
+  PYTHON_VER: 3.11.12-0.3.0
+
+jobs:
+  build:
+    name: Build aarch64 archive
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version from driver.json
+        id: meta
+        run: |
+          VERSION=$(jq -r .version ${INTG_DIR}/driver.json)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "ARTIFACT_NAME=uc-intg-${DRIVER_ID}-${VERSION}-aarch64" >> $GITHUB_ENV
+
+      - name: Build with PyInstaller (aarch64)
+        run: |
+          sudo apt-get update && sudo apt-get install -y qemu-system-arm binfmt-support qemu-user-static
+          docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+          docker run --rm --name builder \
+            --platform=aarch64 \
+            --user=$(id -u):$(id -g) \
+            -v ${GITHUB_WORKSPACE}/${INTG_DIR}:/workspace \
+            docker.io/unfoldedcircle/r2-pyinstaller:${PYTHON_VER} \
+            bash -c \
+            "cd /workspace && \
+              python -m pip install -r requirements.txt && \
+              pyinstaller --clean --onedir --name intg-${DRIVER_ID} \
+                --collect-all zeroconf \
+                --collect-all mozart_api \
+                --collect-all aiohttp \
+                --collect-all certifi \
+                --collect-all pydantic \
+                --collect-all pydantic_core \
+                --collect-all pychromecast \
+                --collect-all casttube \
+                uc_intg_bang_olufsen/driver.py"
+
+      - name: Assemble archive
+        run: |
+          mkdir -p artifacts/bin
+          mv ${INTG_DIR}/dist/intg-${DRIVER_ID}/* artifacts/bin
+          mv artifacts/bin/intg-${DRIVER_ID} artifacts/bin/driver
+          cp ${INTG_DIR}/driver.json artifacts/
+          tar czvf ${ARTIFACT_NAME}.tar.gz -C artifacts .
+          ls -lah ${ARTIFACT_NAME}.tar.gz
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.ARTIFACT_NAME }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Create release (tagged builds only)
+        if: startsWith(github.ref, 'refs/tags/bo-v')
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "${{ env.ARTIFACT_NAME }}.tar.gz"
+          draft: true
+          generateReleaseNotes: true
+          tag: ${{ github.ref_name }}

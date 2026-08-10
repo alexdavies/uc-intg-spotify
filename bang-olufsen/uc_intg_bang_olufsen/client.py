@@ -52,6 +52,9 @@ class BeoClient:
         self._client = MozartClient(host)
         self._jid: Optional[str] = None
         self._volume_maximum: int = 100
+        # id -> friendly name, populated by get_sources(); used to label the
+        # active source in get_state() (Mozart has no active-source getter).
+        self._source_names: Dict[str, str] = {}
         # Callback invoked with a dict of changed attributes on any push update.
         self.on_update: Optional[Callable[[Dict[str, Any]], Awaitable[None] | None]] = None
         self._notifications_started = False
@@ -76,6 +79,7 @@ class BeoClient:
         self._client.get_playback_progress_notifications(self._on_progress)
         self._client.get_volume_notifications(self._on_volume)
         self._client.get_source_change_notifications(self._on_source)
+        self._client.get_power_state_notifications(self._on_power)
 
         try:
             await self._client.connect_notifications(reconnect=True)
@@ -119,8 +123,12 @@ class BeoClient:
 
         result = []
         for source in (sources.items or []):
-            if source.is_enabled and source.is_playable and source.id:
-                result.append({"id": source.id, "name": source.name or source.id})
+            # is_enabled / is_playable are Optional and often None or False when
+            # idle, so only exclude sources that are *explicitly* disabled.
+            if not source.id or source.is_enabled is False:
+                continue
+            result.append({"id": source.id, "name": source.name or source.id})
+        self._source_names = {s["id"]: s["name"] for s in result}
         return result
 
     async def get_presets(self) -> List[Dict[str, Any]]:
@@ -136,7 +144,10 @@ class BeoClient:
 
         result = []
         for key, preset in (presets or {}).items():
-            preset_id = preset.id if preset.id is not None else _safe_int(key)
+            # The dict key ('1'..'4') is the integer preset number that
+            # activate_preset() expects. ``preset.id`` is an unrelated UUID and
+            # must NOT be used for activation.
+            preset_id = _safe_int(key)
             if preset_id is None:
                 continue
             label = preset.title or preset.name or f"Preset {preset_id}"
@@ -153,6 +164,17 @@ class BeoClient:
                 state["playing"] = playback.state.value in PLAYING_STATES
             if playback.metadata:
                 state.update(_metadata_to_attrs(playback.metadata))
+                # Mozart has no active-source getter; the metadata carries the
+                # current source id, which the push path (_on_source) also sends.
+                source_id = getattr(playback.metadata, "source", None)
+                if source_id:
+                    state["source_id"] = source_id
+                    name = self._source_names.get(source_id)
+                    if not name:
+                        await self.get_sources()  # refresh id -> name map
+                        name = self._source_names.get(source_id)
+                    if name:
+                        state["source_name"] = name
             if playback.progress and playback.progress.progress is not None:
                 state["position"] = playback.progress.progress
         except Exception as e:
@@ -180,6 +202,17 @@ class BeoClient:
 
     async def pause(self) -> bool:
         return await self._playback(PLAYBACK_PAUSE)
+
+    async def play_pause(self) -> bool:
+        """Toggle play/pause based on the device's *live* state."""
+        playing = False
+        try:
+            pb = await self._client.get_playback_state()
+            if pb and pb.state and pb.state.value:
+                playing = pb.state.value in PLAYING_STATES
+        except Exception as e:
+            _LOG.debug("Could not read playback state on %s: %s", self.name, e)
+        return await (self.pause() if playing else self.play())
 
     async def stop(self) -> bool:
         return await self._playback(PLAYBACK_STOP)
@@ -266,6 +299,15 @@ class BeoClient:
             _LOG.error("Beolink join %s failed on %s: %s", jid, self.name, e)
             return False
 
+    async def beolink_join_latest(self) -> bool:
+        """Join the most recent Beolink experience on the network (multiroom)."""
+        try:
+            await self._client.join_latest_beolink_experience()
+            return True
+        except Exception as e:
+            _LOG.error("Beolink join-latest failed on %s: %s", self.name, e)
+            return False
+
     async def beolink_leave(self) -> bool:
         try:
             await self._client.post_beolink_leave()
@@ -301,14 +343,26 @@ class BeoClient:
         if getattr(source, "id", None):
             await self._emit({"source_id": source.id, "source_name": source.name})
 
+    async def _on_power(self, notification) -> None:
+        value = getattr(notification, "value", None)
+        if value is not None:
+            await self._emit({"on": value == "on"})
+
     def _volume_to_attrs(self, volume) -> Dict[str, Any]:
+        # Mozart wraps each value in a sub-object: VolumeState.level is a
+        # VolumeLevel with an int ``.level`` field, .maximum a VolumeMaximum
+        # (also ``.level``), and .muted a Muted with a bool ``.muted`` field.
         attrs: Dict[str, Any] = {}
-        if getattr(volume, "maximum", None):
-            self._volume_maximum = volume.maximum or self._volume_maximum
-        if getattr(volume, "level", None) is not None:
-            attrs["volume"] = round(volume.level * 100 / self._volume_maximum)
-        if getattr(volume, "muted", None) is not None:
-            attrs["muted"] = bool(volume.muted)
+        maximum = _vol_int(getattr(volume, "maximum", None))
+        if maximum:
+            self._volume_maximum = maximum
+        level = _vol_int(getattr(volume, "level", None))
+        if level is not None:
+            attrs["volume"] = round(level * 100 / self._volume_maximum)
+        muted_obj = getattr(volume, "muted", None)
+        muted = getattr(muted_obj, "muted", muted_obj)
+        if isinstance(muted, bool):
+            attrs["muted"] = muted
         return attrs
 
 
@@ -338,3 +392,12 @@ def _safe_int(value) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _vol_int(obj) -> Optional[int]:
+    """Extract an int from a Mozart volume wrapper (VolumeLevel/VolumeMaximum
+    expose the number as ``.level``) or from a plain number."""
+    if obj is None:
+        return None
+    inner = getattr(obj, "level", obj)
+    return inner if isinstance(inner, (int, float)) else None

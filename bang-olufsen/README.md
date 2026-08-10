@@ -17,25 +17,35 @@ This integration talks the **Mozart local API** (`mozart-api`) directly over the
 LAN, so it discovers the Emerge, controls it in real time, and can trigger radio
 favourites and multiroom — none of which Spotify can do.
 
-> **Status: Phase 1.** Covers Mozart speakers (incl. the Emerge). An older
-> Beoplay A9 (pre-5th-gen) uses a different *legacy* protocol and is not yet
-> supported here — see the roadmap below. This package lives inside the
-> `uc-intg-spotify` repo for now and is designed to be lifted into its own repo
-> (`uc-intg-bang-olufsen`) later.
+> **Status: Phase 1 + 2.** Covers both Mozart speakers (e.g. Beosound Emerge)
+> **and** older "ASE"/BeoNetRemote speakers (e.g. Beoplay A9 4th gen) via two
+> backends behind one entity layer. The integration auto-selects the backend per
+> speaker. This package lives inside the `uc-intg-spotify` repo for now and is
+> designed to be lifted into its own repo (`uc-intg-bang-olufsen`) later.
+>
+> **Radio favourites caveat:** Mozart speakers expose presets over the API, so
+> radio favourites work as buttons/sources on those. The Beoplay A9 4th gen does
+> **not** expose a Favorites endpoint, so on it radio is reached by selecting the
+> "B&O Radio" source (which resumes the last station). Per-station favourites on
+> legacy speakers are a planned follow-up (capture & replay via the play queue).
 
 ## Features
 
-- **Network discovery** of Mozart speakers via mDNS (`_bangolufsen._tcp`), plus
-  manual IP entry for speakers on another subnet.
-- **One media player + one remote entity per speaker.**
-- **Real-time state** (now playing, album art, volume, transport) pushed over the
-  Mozart notification WebSocket — no polling, no Spotify rate-limit concerns.
-- **Transport / volume / mute / source selection.**
-- **Radio favourites**: each speaker preset (the physical favourite buttons,
-  typically radio stations) is exposed both as a media-player source
-  (`Radio: ...`) and as a remote button / simple command (`RADIO_*`).
-- **Beolink multiroom**: "Play on <peer>" expands the current experience to
-  another configured speaker; "Leave multiroom" detaches.
+- **One media player per speaker.** Each configured speaker becomes its own
+  independent media-player entity (e.g. *Alex's Emerge*, *Davies9*) showing that
+  speaker's own now-playing, volume and source list. Because the two platforms
+  (Mozart vs legacy) genuinely differ, one entity each keeps the live state of
+  every speaker unambiguous.
+- **Network discovery** of both Mozart (`_bangolufsen._tcp`) and legacy
+  (`_beoremote._tcp`) speakers via mDNS, so older models like the Beoplay A9
+  appear already named; plus manual IP entry as a fallback.
+- **Real-time state** (now playing, album art, volume, transport) pushed over
+  each speaker's notification stream — no polling.
+- **Transport / volume / mute / source selection** per speaker.
+- **Radio favourites**: on Mozart speakers each preset is exposed as a source
+  (`Radio: ...`). The Beoplay A9 4th gen has no Favorites API, so on it radio is
+  reached by selecting the "B&O Radio" source. (Direct station tuning on the A9
+  isn't possible over its local API — see `API_NOTES.md`.)
 
 ## Setup
 
@@ -74,11 +84,14 @@ hardware (see `tests/`).
 
 ## Roadmap
 
-- **Phase 2 — legacy Beoplay A9 (pre-5th-gen):** add a `BeoNetRemote` backend
-  behind the same entity layer so the older A9 lives in the same integration.
 - **Phase 3 — Spotify bridge:** use the local API to wake / select the Spotify
   source on a speaker so the `uc-intg-spotify` plugin can reliably start a
   chosen playlist on an otherwise-idle Emerge.
+- **Legacy radio favourites:** capture the currently-playing station on the A9
+  (via the play queue / `NOW_PLAYING_NET_RADIO`) and store named favourites that
+  can be replayed, since the A9 4th gen exposes no Favorites API endpoint.
+- **Multiroom across backends:** "play on both" is reliable between Mozart
+  speakers; Mozart↔legacy expansion is limited by the older protocol.
 
 ## Open items to verify against real devices
 
