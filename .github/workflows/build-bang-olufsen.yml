@@ -73,11 +73,22 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Create release (tagged builds only)
-        if: startsWith(github.ref, 'refs/tags/bo-v')
+      # Publish a real (non-draft) release so the .tar.gz has an obvious download
+      # button - workflow-run artifacts require sign-in + desktop, releases don't.
+      # Runs on tag pushes AND manual dispatches (dispatch pins tag bo-v0.1.1).
+      - name: Publish release with installable archive
         uses: ncipollo/release-action@v1
         with:
           artifacts: "${{ env.ARTIFACT_NAME }}.tar.gz"
-          draft: true
-          generateReleaseNotes: true
-          tag: ${{ github.ref_name }}
+          tag: ${{ github.ref_type == 'tag' && github.ref_name || 'bo-v0.1.1' }}
+          name: "Bang & Olufsen (Local) v${{ env.VERSION }}"
+          body: |
+            Resident Unfolded Circle integration for Bang & Olufsen speakers.
+
+            **Install:** download the `.tar.gz` asset below, then in the Remote's
+            Web Configurator go to Integrations → Add new → Install custom and
+            upload it. Do not unzip the `.tar.gz`.
+          draft: false
+          prerelease: true
+          allowUpdates: true
+          makeLatest: true
