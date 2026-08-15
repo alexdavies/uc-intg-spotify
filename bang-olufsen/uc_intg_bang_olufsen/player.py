@@ -29,6 +29,10 @@ RADIO_PREFIX = "Radio: "
 # = picker shows only radio + playlists. Add e.g. "line", "optical" to include them.
 _KEEP_INPUTS: tuple = ()
 
+# Volume step (percentage points) for a single VOLUME_UP / VOLUME_DOWN press.
+# Kept small so the hardware +/- buttons are fine-grained.
+_VOLUME_STEP = 2
+
 
 class BeoPlayer:
     """One media player entity for a single speaker."""
@@ -132,8 +136,8 @@ class BeoPlayer:
                 Commands.NEXT: self._client.next_track,
                 Commands.PREVIOUS: self._client.previous_track,
                 Commands.MUTE_TOGGLE: self._mute_toggle,
-                Commands.VOLUME_UP: lambda: self._nudge_volume(5),
-                Commands.VOLUME_DOWN: lambda: self._nudge_volume(-5),
+                Commands.VOLUME_UP: lambda: self._nudge_volume(_VOLUME_STEP),
+                Commands.VOLUME_DOWN: lambda: self._nudge_volume(-_VOLUME_STEP),
             }
             if cmd_id in simple:
                 return _status(await simple[cmd_id]())
