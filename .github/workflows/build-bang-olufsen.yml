@@ -75,12 +75,13 @@ jobs:
 
       # Publish a real (non-draft) release so the .tar.gz has an obvious download
       # button - workflow-run artifacts require sign-in + desktop, releases don't.
-      # Runs on tag pushes AND manual dispatches (dispatch pins tag bo-v0.1.1).
+      # Runs on tag pushes AND manual dispatches (dispatch tags bo-v<version> from
+      # driver.json, so each version gets its own clean release).
       - name: Publish release with installable archive
         uses: ncipollo/release-action@v1
         with:
           artifacts: "${{ env.ARTIFACT_NAME }}.tar.gz"
-          tag: ${{ github.ref_type == 'tag' && github.ref_name || 'bo-v0.1.1' }}
+          tag: ${{ github.ref_type == 'tag' && github.ref_name || format('bo-v{0}', env.VERSION) }}
           name: "Bang & Olufsen (Local) v${{ env.VERSION }}"
           body: |
             Resident Unfolded Circle integration for Bang & Olufsen speakers.
