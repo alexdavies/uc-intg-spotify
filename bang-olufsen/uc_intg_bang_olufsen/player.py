@@ -25,6 +25,9 @@ _LOG = logging.getLogger(__name__)
 # Prefix marking radio stations in the source list.
 RADIO_PREFIX = "Radio: "
 
+# Source-picker entry that leaves a multiroom group.
+_MULTIROOM_LEAVE = "Stop multiroom"
+
 # Physical inputs to keep in the source picker (match by name substring). Empty
 # = picker shows only radio + playlists. Add e.g. "line", "optical" to include them.
 _KEEP_INPUTS: tuple = ()
@@ -72,6 +75,7 @@ class BeoPlayer:
         # the driver when there's another speaker to group with.
         self._joiner = None
         self._other_name: str = ""
+        self._multiroom_join: str = ""  # source-picker label, set by set_multiroom
 
         # This speaker's push updates flow straight to this entity.
         self._client.on_update = self._on_update
@@ -154,6 +158,10 @@ class BeoPlayer:
         if not params or "source" not in params:
             return ucapi.StatusCodes.BAD_REQUEST
         source = params["source"]
+        if self.has_multiroom and source == self._multiroom_join:
+            return _status(await self.join_multiroom())
+        if self.has_multiroom and source == _MULTIROOM_LEAVE:
+            return _status(await self.leave_multiroom())
         if source in self._radio:
             station = self._radio[source]
             ok = await self._cast_station(station)
@@ -283,7 +291,10 @@ class BeoPlayer:
     # ----- helpers ---------------------------------------------------------
 
     def _source_list(self) -> List[str]:
-        return list(self._radio) + list(self._playlists) + list(self._source_ids)
+        items = list(self._radio) + list(self._playlists) + list(self._source_ids)
+        if self.has_multiroom:
+            items += [self._multiroom_join, _MULTIROOM_LEAVE]
+        return items
 
     def close(self) -> None:
         """Release the Chromecast connection (called on shutdown)."""
@@ -292,10 +303,16 @@ class BeoPlayer:
     # ----- multiroom (Beolink) --------------------------------------------
 
     def set_multiroom(self, joiner, other_name: str) -> None:
-        """Enable a multiroom button. ``joiner`` is the Beolink-capable (Mozart)
-        client that will join/leave the group; ``other_name`` labels the button."""
+        """Enable multiroom. ``joiner`` is the Beolink-capable (Mozart) client that
+        joins/leaves the group; ``other_name`` names the source-picker entry.
+
+        Adds "Play with <other>" and "Stop multiroom" to this speaker's source
+        picker (the media card), so multiroom lives on the one entity too."""
         self._joiner = joiner
         self._other_name = other_name
+        self._multiroom_join = f"Play with {other_name}"
+        # Refresh the source list now that multiroom is available.
+        self.entity.attributes[Attributes.SOURCE_LIST] = self._source_list()
 
     @property
     def has_multiroom(self) -> bool:
