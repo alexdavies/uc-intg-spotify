@@ -31,21 +31,38 @@ favourites and multiroom — none of which Spotify can do.
 
 ## Features
 
-- **One media player per speaker.** Each configured speaker becomes its own
-  independent media-player entity (e.g. *Alex's Emerge*, *Davies9*) showing that
-  speaker's own now-playing, volume and source list. Because the two platforms
-  (Mozart vs legacy) genuinely differ, one entity each keeps the live state of
-  every speaker unambiguous.
-- **Network discovery** of both Mozart (`_bangolufsen._tcp`) and legacy
-  (`_beoremote._tcp`) speakers via mDNS, so older models like the Beoplay A9
-  appear already named; plus manual IP entry as a fallback.
-- **Real-time state** (now playing, album art, volume, transport) pushed over
-  each speaker's notification stream — no polling.
-- **Transport / volume / mute / source selection** per speaker.
-- **Radio favourites**: on Mozart speakers each preset is exposed as a source
-  (`Radio: ...`). The Beoplay A9 4th gen has no Favorites API, so on it radio is
-  reached by selecting the "B&O Radio" source. (Direct station tuning on the A9
-  isn't possible over its local API — see `API_NOTES.md`.)
+- **One media-player entity per speaker — and that's the whole UI.** Each
+  speaker (e.g. *Davies9*, *Alex's Emerge*) is a single media-player entity:
+  the now-playing card (title / artist / artwork / progress), transport, volume
+  and mute, plus a **source list** made of the custom radio stations and your
+  curated Spotify playlists. Drop it on a page or into an activity — there is no
+  separate "controls" remote entity any more.
+- **Physical buttons.** In an activity map VOLUME_UP/DOWN, MUTE, PLAY, PREV/NEXT,
+  STOP and POWER to the media player (`media_player.volume_up`, `.toggle`, ...);
+  on the Remote 3 the touch slider can target the player's `volume` feature.
+- **Radio** stations are cast to the speaker's Chromecast (the only way to tune an
+  arbitrary station on the legacy A9 — see `API_NOTES.md`). Selecting
+  `Radio: <station>` from the source list plays it and fills the card.
+- **Radio now-playing text + artwork.** A cast carries no track info back from
+  the speaker, so each station can name a metadata provider (`nowplaying` in
+  the station config): `abc` (ABC Radio's plays API — triple j etc.), `icy`
+  (Icecast in-band metadata, e.g. Energy Zürich, incl. cover art) or `bbc`
+  (BBC Sounds' segments API — composer / work, or the programme between
+  tracks). The card shows track / artist, the station name as "album", and the
+  track or cover art; polled every 20 s while the station is playing.
+- **Station logos** ship inside the driver (`uc_intg_bang_olufsen/logos/`,
+  512 px, referenced as `logo:<file>`) and are sent as base64 data URLs, so
+  nothing depends on an external image host.
+- **Spotify playlists** (optional) start on the speaker via Spotify Connect; while
+  Spotify is the source, next/previous/play-pause are routed through the Spotify
+  Web API (the speakers' own skip commands are no-ops on Connect).
+- **Network discovery** of Mozart (`_bangolufsen._tcp`) and legacy
+  (`_beoremote._tcp`) speakers via mDNS, plus manual IP entry.
+- **Real-time state** pushed from each speaker's notification stream.
+- **Honest volume handling:** the legacy A9 silently ignores volume writes while
+  in standby (it still answers HTTP 200); the driver reads the level back and
+  reports the command as failed instead of pretending. Volume up/down step is
+  `volume_step` percent in `config.json` (default 5).
 
 ## Setup
 
@@ -87,9 +104,8 @@ hardware (see `tests/`).
 - **Phase 3 — Spotify bridge:** use the local API to wake / select the Spotify
   source on a speaker so the `uc-intg-spotify` plugin can reliably start a
   chosen playlist on an otherwise-idle Emerge.
-- **Legacy radio favourites:** capture the currently-playing station on the A9
-  (via the play queue / `NOW_PLAYING_NET_RADIO`) and store named favourites that
-  can be replayed, since the A9 4th gen exposes no Favorites API endpoint.
+- **Legacy radio favourites:** the A9 4th gen exposes no Favorites API; custom
+  stations are cast instead (done). Native-favourite capture/replay is parked.
 - **Multiroom across backends:** "play on both" is reliable between Mozart
   speakers; Mozart↔legacy expansion is limited by the older protocol.
 

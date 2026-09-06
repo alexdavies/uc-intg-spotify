@@ -195,6 +195,15 @@ class BeoClient:
 
         return state
 
+    async def get_volume(self) -> Optional[int]:
+        """Current volume as a 0-100 percentage, or None if unreadable."""
+        try:
+            volume = await self._client.get_current_volume()
+        except Exception as e:
+            _LOG.debug("Could not read volume for %s: %s", self.name, e)
+            return None
+        return self._volume_to_attrs(volume).get("volume")
+
     # ----- commands --------------------------------------------------------
 
     async def play(self) -> bool:

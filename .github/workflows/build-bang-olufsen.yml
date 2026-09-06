@@ -10,6 +10,9 @@ name: "Build Bang & Olufsen Integration"
     tags:
       - 'bo-v*'
 
+permissions:
+  contents: write
+
 env:
   INTG_DIR: bang-olufsen
   DRIVER_ID: bang_olufsen_local
@@ -52,6 +55,7 @@ jobs:
                 --collect-all pydantic_core \
                 --collect-all pychromecast \
                 --collect-all casttube \
+                --add-data uc_intg_bang_olufsen/logos:uc_intg_bang_olufsen/logos \
                 uc_intg_bang_olufsen/driver.py"
 
       - name: Assemble archive
@@ -76,6 +80,6 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           artifacts: "${{ env.ARTIFACT_NAME }}.tar.gz"
-          draft: true
+          draft: false
           generateReleaseNotes: true
           tag: ${{ github.ref_name }}

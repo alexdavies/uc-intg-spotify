@@ -134,7 +134,18 @@ class LegacyBeoClient:
         if source:
             state["source_id"], state["source_name"] = source
 
+        on = await self.is_on()
+        if on is not None:
+            state["on"] = on
+
         return state
+
+    async def get_volume(self) -> Optional[int]:
+        """Current volume as a 0-100 percentage, or None if unreadable."""
+        level = await self._request("GET", "/BeoZone/Zone/Sound/Volume/Speaker/Level")
+        if isinstance(level, dict) and "level" in level:
+            return _to_percent(level["level"])
+        return None
 
     async def get_beolink_jid(self) -> Optional[str]:
         # Legacy multiroom uses a different join model; not exposed as a JID.
@@ -164,9 +175,30 @@ class LegacyBeoClient:
         return await self._command("POST", "/BeoZone/Zone/Stream/Backward")
 
     async def set_volume(self, percent: int) -> bool:
+        """Set the volume. The ASE firmware answers 200 but silently ignores
+        volume writes while the speaker is in standby, and applies accepted
+        writes asynchronously - so poll the level back briefly and only report
+        failure when it never changes *and* the speaker is in standby."""
         percent = max(0, min(100, percent))
         level = round(percent * LEGACY_VOLUME_MAX / 100)
-        return await self._command("PUT", "/BeoZone/Zone/Sound/Volume/Speaker/Level", {"level": level})
+        if not await self._command("PUT", "/BeoZone/Zone/Sound/Volume/Speaker/Level", {"level": level}):
+            return False
+        for _ in range(5):
+            readback = await self._request("GET", "/BeoZone/Zone/Sound/Volume/Speaker/Level")
+            applied = _safe_int((readback or {}).get("level")) if isinstance(readback, dict) else None
+            if applied is None or applied == level:
+                return True
+            await asyncio.sleep(0.1)
+        if await self.is_on() is False:
+            _LOG.info("%s ignored volume %s - speaker is in standby", self.name, level)
+            return False
+        return True  # accepted; the device is just slow to reflect it
+
+    async def is_on(self) -> Optional[bool]:
+        """Power state: True (on), False (standby) or None if unreadable."""
+        power = await self._request("GET", "/BeoDevice/powerManagement/standby")
+        power_state = ((power or {}).get("standby") or {}).get("powerState") if isinstance(power, dict) else None
+        return None if not power_state else power_state == "on"
 
     async def set_mute(self, muted: bool) -> bool:
         return await self._command("PUT", "/BeoZone/Zone/Sound/Volume/Speaker/Muted", {"muted": muted})
@@ -289,7 +321,9 @@ def _notification_to_attrs(ntype: Optional[str], data: Dict[str, Any]) -> Dict[s
 
     elif ntype == "PROGRESS_INFORMATION":
         if data.get("state") is not None:
-            attrs["playing"] = str(data["state"]).lower() in {"play", "playing"}
+            # "preparing" is emitted repeatedly while a cast/stream buffers
+            # (verified on the A9); treat it as playing so the card doesn't flap.
+            attrs["playing"] = str(data["state"]).lower() in {"play", "playing", "preparing"}
         if data.get("position") is not None:
             attrs["position"] = data["position"]
         if data.get("totalDuration") is not None:
@@ -305,14 +339,38 @@ def _notification_to_attrs(ntype: Optional[str], data: Dict[str, Any]) -> Dict[s
         album = data.get("album")
         if album:
             attrs["album"] = album
+        images = data.get("trackImage") or data.get("image") or []
+        if isinstance(images, list):
+            # Prefer the large rendition; fall back to whatever has a URL.
+            large = next((i.get("url") for i in images if isinstance(i, dict) and i.get("size") == "large" and i.get("url")), None)
+            url = large or next((i.get("url") for i in images if isinstance(i, dict) and i.get("url")), None)
+            if url:
+                attrs["image_url"] = url
+
+    elif ntype == "SHUTDOWN":
+        # Verified on the A9 4th gen: entering standby emits SHUTDOWN
+        # {"reason": "standby"}. There is no matching "on" event; the player
+        # infers power-on from the next playing/source update.
+        if str(data.get("reason", "")).lower() in {"standby", "allstandby", "off"}:
+            attrs["on"] = False
 
     elif ntype == "SOURCE":
         src = (data.get("primaryExperience") or {}).get("source") or data.get("source") or {}
         if src.get("id"):
             attrs["source_id"] = src["id"]
             attrs["source_name"] = src.get("friendlyName") or src["id"]
+            # A real source becoming active means the speaker is on (there is
+            # no explicit power-on notification on this firmware).
+            attrs["on"] = True
 
     return attrs
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _to_percent(level: Any) -> int:

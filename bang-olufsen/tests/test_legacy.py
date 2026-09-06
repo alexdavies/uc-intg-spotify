@@ -33,10 +33,64 @@ def test_volume_scaling_0_to_90():
 def test_set_volume_scales_back_to_device_range():
     c = LegacyBeoClient("10.0.0.9")
     c._command = AsyncMock(return_value=True)
-    asyncio.run(c.set_volume(100))
+    c._request = AsyncMock(return_value={"level": 90})  # read-back confirms
+    assert asyncio.run(c.set_volume(100)) is True
     method, path, body = c._command.call_args.args
     assert path.endswith("/Speaker/Level")
     assert body == {"level": 90}
+
+
+def _fake_request(level, power):
+    async def _req(method, path, json=None):
+        if path.endswith("/Speaker/Level"):
+            return {"level": level}
+        if path.endswith("/standby"):
+            return {"standby": {"powerState": power}}
+        return {}
+    return _req
+
+
+def test_set_volume_reports_failure_when_speaker_ignores_it_in_standby():
+    # The A9 answers 200 in standby but leaves the level unchanged.
+    c = LegacyBeoClient("10.0.0.9")
+    c._command = AsyncMock(return_value=True)
+    c._request = _fake_request(level=25, power="standby")
+    assert asyncio.run(c.set_volume(50)) is False
+
+
+def test_set_volume_trusts_slow_readback_when_on():
+    # Powered on but the level hasn't caught up yet: treat as accepted.
+    c = LegacyBeoClient("10.0.0.9")
+    c._command = AsyncMock(return_value=True)
+    c._request = _fake_request(level=25, power="on")
+    assert asyncio.run(c.set_volume(50)) is True
+
+
+def test_notification_source_implies_on():
+    attrs = _notification_to_attrs("SOURCE", {"primaryExperience": {"source": {"id": "gc:1", "friendlyName": "Chromecast built-in"}}})
+    assert attrs["on"] is True and attrs["source_name"] == "Chromecast built-in"
+
+
+def test_get_volume_reads_percent():
+    c = LegacyBeoClient("10.0.0.9")
+    c._request = AsyncMock(return_value={"level": 45})
+    assert asyncio.run(c.get_volume()) == 50
+
+
+def test_notification_preparing_counts_as_playing():
+    assert _notification_to_attrs("PROGRESS_INFORMATION", {"state": "preparing"}) == {"playing": True}
+    assert _notification_to_attrs("PROGRESS_INFORMATION", {"state": "stop"}) == {"playing": False}
+
+
+def test_notification_stored_music_carries_artwork():
+    attrs = _notification_to_attrs("NOW_PLAYING_STORED_MUSIC", {
+        "name": "Energy Zürich", "trackImage": [{"url": "http://img/small.png", "size": "small"},
+                                                {"url": "http://img/large.png", "size": "large"}]})
+    assert attrs["title"] == "Energy Zürich" and attrs["image_url"] == "http://img/large.png"
+
+
+def test_notification_shutdown_means_off():
+    assert _notification_to_attrs("SHUTDOWN", {"reason": "standby"}) == {"on": False}
 
 
 class _FakeResp:
@@ -134,9 +188,8 @@ def test_notification_progress():
 
 
 def test_notification_source():
-    data = {"primaryExperience": {"source": {"id": "radio:456", "friendlyName": "B&O Radio"}}}
-    attrs = _notification_to_attrs("SOURCE", data)
-    assert attrs == {"source_id": "radio:456", "source_name": "B&O Radio"}
+    attrs = _notification_to_attrs("SOURCE", {"primaryExperience": {"source": {"id": "radio:1", "friendlyName": "B&O Radio"}}})
+    assert attrs == {"source_id": "radio:1", "source_name": "B&O Radio", "on": True}
 
 
 def test_factory_creates_correct_backend():

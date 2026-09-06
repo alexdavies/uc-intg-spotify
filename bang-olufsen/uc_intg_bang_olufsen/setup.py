@@ -43,8 +43,19 @@ class BeoSetup:
         return ucapi.SetupError(ucapi.IntegrationSetupError.OTHER)
 
     async def _handle_driver_setup_request(self, msg: ucapi.DriverSetupRequest) -> ucapi.SetupAction:
-        # Spotify Client ID/Secret may be supplied on the initial form (driver.json).
         setup_data = msg.setup_data or {}
+
+        # Whole-config import (migration from an off-device driver): skips
+        # discovery and Spotify authorization entirely.
+        pasted = (setup_data.get("config_json") or "").strip()
+        if pasted:
+            if not self._config.import_json(pasted):
+                return ucapi.SetupError(ucapi.IntegrationSetupError.OTHER)
+            _LOG.info("Imported config.json (%d device(s))", len(self._config.get_devices()))
+            await self._setup_complete_callback()
+            return ucapi.SetupComplete()
+
+        # Spotify Client ID/Secret may be supplied on the initial form (driver.json).
         client_id = (setup_data.get("spotify_client_id") or "").strip()
         client_secret = (setup_data.get("spotify_client_secret") or "").strip()
         if client_id and client_secret:

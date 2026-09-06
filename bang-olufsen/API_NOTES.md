@@ -78,6 +78,24 @@ favourites. This is the key to cross-device radio.
   `VOLUME` (`speaker.level/muted`), `NOW_PLAYING_NET_RADIO` (`name`, `stationId`,
   `playQueueItemId`), `NOW_PLAYING_ENDED`, `SOFTWARE_UPDATE_STATE`, etc.
 
+### Power / standby quirks (verified 2026-09-06)
+- **Volume writes are silently ignored in standby.** `PUT .../Speaker/Level`
+  answers **200** but the level does not change while `powerState=standby`;
+  after `powerState=on` the same PUT applies. Accepted writes are applied
+  **asynchronously** — an immediate GET can still return the old level for
+  ~100–300 ms. The driver therefore polls the level back briefly and only
+  reports failure when it never changes *and* the speaker is in standby.
+- **No power-on notification.** Entering standby emits
+  `SHUTDOWN {"reason":"standby"}` on `/BeoNotify`. Waking emits only
+  `SOURCE {}` / `NOW_PLAYING_ENDED` / `PROGRESS_INFORMATION {"state":"stop"}`;
+  a *real* `SOURCE` (with an id) or a `play`/`preparing` progress state is what
+  tells you it's on. Read `/BeoDevice/powerManagement/standby` for the initial
+  state.
+- **Casting sequence** on `/BeoNotify`: `SOURCE` (googlecast) → `PROGRESS
+  preparing` → `stop` → `NOW_PLAYING_STORED_MUSIC {name, trackImage[], ...}`
+  (the A9 echoes the cast title + artwork) → `play` → `preparing` … Treat
+  `preparing` as playing/buffering or the card flaps to PAUSED.
+
 ### Sources
 - `GET /BeoZone/Zone/Sources` — 13 sources. Switch with
   `POST /BeoZone/Zone/ActiveSources {"primaryExperience":{"source":{"id":<id>}}}`.
@@ -219,7 +237,7 @@ Mozart `post_uri_source`).
 
 | Station | airable id | cast stream URL | content_type | verified |
 |---|---|---|---|---|
-| triple j (NSW) | 2554623176809400 | `https://live-radio01.mediahubaustralia.com/2TJW/aac/` | audio/aac | ✅ audible |
+| triple j (NSW) | 2554623176809400 | `https://mediaserviceslive.akamaized.net/hls/live/2038308/triplejnsw/masterhq.m3u8` | application/vnd.apple.mpegurl | ✅ cast PLAYING (2026-09-06); the old `live-radio01.mediahubaustralia.com/2TJW/aac/` now returns **403** and the cast fails with a receiver error |
 | BBC Radio 6 Music | 8785094880964608 | `https://lsn.lv/bbcradio.m3u8?station=bbc_6music&bitrate=320000` | application/x-mpegurl | ✅ audible |
 | Energy Zürich | 3787747871130705 | `https://energyzuerich.ice.infomaniak.ch/energyzuerich-high.mp3` | audio/mpeg | ✅ PLAYING |
 | BBC Radio 2 | 2972408424131572 | `https://lsn.lv/bbcradio.m3u8?station=bbc_radio_two&bitrate=320000` | application/x-mpegurl | (lsn.lv, untested) |
@@ -235,7 +253,35 @@ use the `ww` worldwide variant. `lsn.lv` also accepts `&uk=1` for the UK-only
 high-quality variant. Source for current BBC URLs:
 <https://garfnet.org.uk/cms/bbc-national-and-local-radio-hls-streams/>.
 
-## Spotify playlists (optional, via Spotify Connect — not yet live-tested)
+## Unfolded Circle Remote — driving it from a laptop (verified 2026-09-06)
+The Remote's REST API (basic auth `web-configurator:<PIN>`, OpenAPI at
+`http://<remote>/doc/core-rest/openapi.yaml`) is enough for a full debug loop
+without touching the Remote's screen:
+- **On-device vs external driver.** A custom integration *installed on the
+  Remote* (`driver_type: CUSTOM`) runs its own copy of the code on the Remote;
+  a driver running on a Mac is a separate **EXTERNAL** driver. Both use the same
+  `driver_id`, so the Remote will not connect to the Mac while the on-device
+  copy exists. To iterate locally: `DELETE /api/intg/drivers/bang_olufsen_local`
+  (removes the on-device copy, its instance, entities and activity references),
+  then register the external one with `POST /api/intg/drivers` sending the full
+  `driver.json` plus `"driver_url": "ws://<mac-hostname>.local:9090"` — the
+  hostname form survives DHCP changes (a long-running driver bound to a stale
+  IP is exactly how the June setup silently stopped working).
+- **Setup without the UI:** `POST /api/intg/setup {"driver_id": ..., "setup_data":
+  {every field of setup_data_schema, "" is fine}}`, poll `GET /api/intg/setup/<id>`
+  until `OK`, then `POST /api/intg/instances/<id>.main/entities ["<entity id>", ...]`.
+- **Reconnect:** `PUT /api/intg/instances/<id>.main?cmd=DISCONNECT|CONNECT`.
+- **Commands:** `PUT /api/entities/<entity id>/command {"cmd_id":
+  "media_player.volume_up"}` (params e.g. `{"source": "Radio: triple j"}`).
+- **Activities:** `PATCH /api/activities/<id>` (`options.entity_ids`,
+  `options.touch_slider {enabled, target:{entity_id, feature:"volume"}}`),
+  `POST .../buttons` (replace physical button mapping; each `short_press` needs
+  `entity_id` + `cmd_id`), `PATCH .../ui/pages/<page>` / `POST .../ui/pages`
+  (items: `media_player` widget via `media_player_id`, `text`/`icon` with an
+  `EntityCommand`). An activity with **no** button mapping is why the physical
+  volume keys did nothing.
+
+## Spotify playlists (optional, via Spotify Connect — ✅ live-tested 2026-09-06 on the A9)
 Spotify playback can't be originated on the speaker locally, so the optional
 "Spotify" page drives it through the **Spotify Web API**: `PUT /me/player/play?
 device_id=<speaker>` with the playlist `context_uri`, targeting the speaker as a

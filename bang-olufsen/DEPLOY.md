@@ -13,6 +13,12 @@ Spotify integration (`spotify`). You can run all of them side by side.
 
 ---
 
+> **Current state (2026-09-06):** the Remote runs the **external** driver from
+> the Mac (`ws://alexanders-mbp.local:9090`, config in `~/config.json`); the
+> on-device 0.1.1 build was removed so the Mac copy can be iterated on. To go
+> back to resident, build 0.2.0+ via CI, delete the external driver on the
+> Remote and install the archive (Route B).
+
 ## Route A — run it off-device first (recommended, zero risk)
 
 The Remote can connect to an integration running on another machine on the same
@@ -77,8 +83,15 @@ Either:
     --form 'file=@"uc-intg-bang_olufsen_local-<version>-aarch64.tar.gz"'
   ```
 
-Then run the integration's setup from the Integrations list to discover your
-speakers.
+Then run the integration's setup from the Integrations list. To migrate from
+an off-device driver without redoing discovery and the Spotify login, paste the
+contents of that driver's `config.json` into the **Import config.json** field on
+the first setup screen (or send it as `setup_data.config_json` via
+`POST /api/intg/setup`).
+
+> The archive path and the external driver share `driver_id`, so remove the
+> external driver (`DELETE /api/intg/drivers/bang_olufsen_local`) before
+> uploading, then re-add the entities to pages/activities.
 
 ### 3. Update or remove
 

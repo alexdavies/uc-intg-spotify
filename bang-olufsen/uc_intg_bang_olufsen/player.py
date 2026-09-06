@@ -11,13 +11,17 @@ per configured speaker; there is no shared/unified player or output selector.
 """
 
 import asyncio
+import base64
 import logging
+import os
 import re
 from typing import Any, Dict, List, Optional
 
+import aiohttp
 import ucapi
-from ucapi.media_player import Attributes, Commands, DeviceClasses, Features, States
+from ucapi.media_player import Attributes, Commands, DeviceClasses, Features, MediaType, States
 
+from uc_intg_bang_olufsen import nowplaying
 from uc_intg_bang_olufsen.cast import BeoCast
 
 _LOG = logging.getLogger(__name__)
@@ -29,21 +33,34 @@ RADIO_PREFIX = "Radio: "
 # = picker shows only radio + playlists. Add e.g. "line", "optical" to include them.
 _KEEP_INPUTS: tuple = ()
 
+# Volume change (in percent) per VOLUME_UP / VOLUME_DOWN press.
+DEFAULT_VOLUME_STEP = 5
+
+# How often to refresh a cast radio station's now-playing metadata.
+RADIO_NOW_PLAYING_SEC = 20
+
 
 class BeoPlayer:
     """One media player entity for a single speaker."""
 
     def __init__(self, api: ucapi.IntegrationAPI, speaker: Dict[str, Any],
                  radio_stations: Optional[List[Dict[str, str]]] = None,
-                 spotify=None, playlists: Optional[List[Dict[str, str]]] = None):
+                 spotify=None, playlists: Optional[List[Dict[str, str]]] = None,
+                 volume_step: int = DEFAULT_VOLUME_STEP, config=None):
         """
         Args:
             speaker: {serial, name, client, sources}.
             radio_stations: custom cast radio list [{name, url, content_type}].
             spotify: optional shared SpotifyClient for playlist playback.
             playlists: curated Spotify playlists [{name, uri}].
+            volume_step: percent change per volume up/down press.
+            config: optional BeoConfig, used to remember the last source so
+                power-on can resume it.
         """
         self._api = api
+        self._config = config
+        self._last_source: Optional[str] = config.get_last_source(speaker["serial"]) if config else None
+        self._volume_step = max(1, int(volume_step))
         self._client = speaker["client"]
         self._serial = speaker["serial"]
         self._name = speaker.get("name") or self._serial
@@ -53,7 +70,8 @@ class BeoPlayer:
         # playlists, and the physical inputs — not the long list of streaming/
         # system "sources" the speaker reports (Bluetooth, Tone Generator, ...).
         self._radio: Dict[str, Dict[str, str]] = {
-            f"{RADIO_PREFIX}{s['name']}": s for s in (radio_stations or [])
+            f"{RADIO_PREFIX}{s['name']}": {**s, "image": resolve_image(s.get("image", ""))}
+            for s in (radio_stations or [])
         }
         self._playlists: Dict[str, str] = {p["name"]: p["uri"] for p in (playlists or [])}
         self._source_ids: Dict[str, str] = {
@@ -61,6 +79,10 @@ class BeoPlayer:
             if any(k in (src["name"] or "").lower() for k in _KEEP_INPUTS)
         }
         self._cast = BeoCast(self._client.host, self._name)
+        # Now-playing poller for the currently cast radio station (see nowplaying.py).
+        self._np_task: Optional[asyncio.Task] = None
+        self._np_station: Optional[Dict[str, Any]] = None
+        self._http: Optional[aiohttp.ClientSession] = None
         # Last known power state (Mozart reports it); used to ignore the
         # now-playing metadata B&O mirrors from other speakers while this one is off.
         self._powered: Optional[bool] = None
@@ -73,11 +95,12 @@ class BeoPlayer:
         self._client.on_update = self._on_update
 
         features = [
-            Features.ON_OFF, Features.VOLUME, Features.VOLUME_UP_DOWN, Features.MUTE_TOGGLE,
+            Features.ON_OFF, Features.TOGGLE,
+            Features.VOLUME, Features.VOLUME_UP_DOWN, Features.MUTE_TOGGLE,
             Features.PLAY_PAUSE, Features.STOP, Features.NEXT, Features.PREVIOUS,
             Features.MEDIA_DURATION, Features.MEDIA_POSITION, Features.MEDIA_TITLE,
             Features.MEDIA_ARTIST, Features.MEDIA_ALBUM, Features.MEDIA_IMAGE_URL,
-            Features.SELECT_SOURCE,
+            Features.MEDIA_TYPE, Features.SELECT_SOURCE,
         ]
         attributes = {
             Attributes.STATE: States.OFF,
@@ -85,6 +108,7 @@ class BeoPlayer:
             Attributes.MUTED: False,
             Attributes.MEDIA_TITLE: "", Attributes.MEDIA_ARTIST: "", Attributes.MEDIA_ALBUM: "",
             Attributes.MEDIA_DURATION: 0, Attributes.MEDIA_POSITION: 0, Attributes.MEDIA_IMAGE_URL: "",
+            Attributes.MEDIA_TYPE: MediaType.MUSIC,
             Attributes.SOURCE: "",
             Attributes.SOURCE_LIST: self._source_list(),
         }
@@ -124,16 +148,27 @@ class BeoPlayer:
                 }
                 if cmd_id in spotify_transport:
                     return _status(await spotify_transport[cmd_id]())
+            # A cast radio station is owned by the Chromecast session: the A9's
+            # own play/pause/stop are no-ops while its source is Chromecast, so
+            # drive the cast's media controller instead.
+            if self._casting():
+                cast_transport = {
+                    Commands.STOP: self._cast_stop,
+                    Commands.PLAY_PAUSE: self._cast_play_pause,
+                }
+                if cmd_id in cast_transport:
+                    return _status(await cast_transport[cmd_id]())
             simple = {
-                Commands.ON: self._client.power_on,
-                Commands.OFF: self._client.standby,
+                Commands.ON: self._power_on,
+                Commands.OFF: self._power_off,
+                Commands.TOGGLE: self._toggle_power,
                 Commands.PLAY_PAUSE: self._client.play_pause,
                 Commands.STOP: self._client.stop,
                 Commands.NEXT: self._client.next_track,
                 Commands.PREVIOUS: self._client.previous_track,
                 Commands.MUTE_TOGGLE: self._mute_toggle,
-                Commands.VOLUME_UP: lambda: self._nudge_volume(5),
-                Commands.VOLUME_DOWN: lambda: self._nudge_volume(-5),
+                Commands.VOLUME_UP: lambda: self._nudge_volume(+1),
+                Commands.VOLUME_DOWN: lambda: self._nudge_volume(-1),
             }
             if cmd_id in simple:
                 return _status(await simple[cmd_id]())
@@ -150,10 +185,15 @@ class BeoPlayer:
         if not params or "source" not in params:
             return ucapi.StatusCodes.BAD_REQUEST
         source = params["source"]
+        if source in self._radio or source in self._playlists:
+            self._remember_source(source)
         if source in self._radio:
             station = self._radio[source]
+            self._stop_now_playing()
             ok = await self._cast_station(station)
             if ok:
+                # Casting wakes the speaker; the legacy A9 sends no "on" event.
+                self._powered = True
                 # The cast carries no metadata back via the speaker's push, so
                 # set the now-playing card (station name + logo) ourselves.
                 self._update({
@@ -162,10 +202,14 @@ class BeoPlayer:
                     Attributes.MEDIA_ARTIST: "",
                     Attributes.MEDIA_ALBUM: "",
                     Attributes.MEDIA_IMAGE_URL: station.get("image", ""),
+                    Attributes.MEDIA_TYPE: MediaType.RADIO,
+                    Attributes.MEDIA_DURATION: 0, Attributes.MEDIA_POSITION: 0,
                     Attributes.STATE: States.PLAYING,
                 })
+                self._start_now_playing(station)
             return _status(ok)
         if source in self._playlists:
+            self._stop_now_playing()
             return _status(await self.play_spotify_playlist(self._playlists[source], source))
         if source in self._source_ids:
             ok = await self._client.set_source(self._source_ids[source])
@@ -210,9 +254,11 @@ class BeoPlayer:
 
     def _spotify_now_playing(self, name: str) -> None:
         # Immediate feedback (don't clear art); the poll loop fills the real track.
+        self._powered = True
         self._update({
             Attributes.SOURCE: "Spotify Connect" if "Spotify Connect" in self._source_ids else "Spotify",
             Attributes.MEDIA_TITLE: name,
+            Attributes.MEDIA_TYPE: MediaType.MUSIC,
             Attributes.STATE: States.PLAYING,
         })
         asyncio.ensure_future(self._first_now_playing())
@@ -237,6 +283,7 @@ class BeoPlayer:
         """Update the card from a Spotify now-playing snapshot (poll or push)."""
         mapped: Dict[str, Any] = {
             Attributes.SOURCE: "Spotify Connect" if "Spotify Connect" in self._source_ids else "Spotify",
+            Attributes.MEDIA_TYPE: MediaType.MUSIC,
             Attributes.STATE: States.PLAYING if info.get("is_playing", True) else States.PAUSED,
             Attributes.MEDIA_TITLE: info.get("title", ""),
             Attributes.MEDIA_ARTIST: info.get("artist", ""),
@@ -249,6 +296,101 @@ class BeoPlayer:
         if info.get("image_url"):
             mapped[Attributes.MEDIA_IMAGE_URL] = info["image_url"]
         self._update(mapped)
+
+    def _adopt_cast(self, attrs: Dict[str, Any], mapped: Dict[str, Any]) -> bool:
+        """A cast we didn't start (driver restarted mid-stream, or another
+        controller cast it): the speaker echoes the station name as the title.
+        Re-attach the station label, logo and now-playing poller."""
+        title = attrs.get("title")
+        if not title:
+            return False
+        source = f"{RADIO_PREFIX}{title}"
+        station = self._radio.get(source)
+        if not station:
+            return False
+        reported = (mapped.get(Attributes.SOURCE) or attrs.get("source_name")
+                    or self.entity.attributes.get(Attributes.SOURCE) or "")
+        if "chromecast" not in reported.lower():
+            return False
+        _LOG.info("[%s] adopting running cast of %s", self._name, title)
+        mapped.update({
+            Attributes.SOURCE: source,
+            Attributes.MEDIA_TITLE: title, Attributes.MEDIA_ARTIST: "", Attributes.MEDIA_ALBUM: "",
+            Attributes.MEDIA_IMAGE_URL: station.get("image", ""),
+            Attributes.MEDIA_TYPE: MediaType.RADIO,
+        })
+        self._start_now_playing(station)
+        return True
+
+    # ----- cast transport --------------------------------------------------
+
+    def _casting(self) -> bool:
+        return (self.entity.attributes.get(Attributes.SOURCE) or "") in self._radio
+
+    async def _cast_stop(self) -> bool:
+        loop = asyncio.get_event_loop()
+        ok = await loop.run_in_executor(None, self._cast.stop_sync)
+        if ok:
+            self._stop_now_playing()
+            # Keep the station on the card so play can restart it.
+            self._update({Attributes.STATE: States.PAUSED})
+        return ok
+
+    async def _cast_play_pause(self) -> bool:
+        loop = asyncio.get_event_loop()
+        if self.entity.attributes.get(Attributes.STATE) == States.PLAYING:
+            ok = await loop.run_in_executor(None, self._cast.pause_sync)
+            if ok:
+                self._update({Attributes.STATE: States.PAUSED})
+            return ok
+        # Paused/stopped: a live stream can't reliably resume, so re-cast it.
+        source = self.entity.attributes.get(Attributes.SOURCE)
+        return (await self._select_source({"source": source})) == ucapi.StatusCodes.OK
+
+    # ----- radio now-playing ----------------------------------------------
+
+    def _start_now_playing(self, station: Dict[str, Any]) -> None:
+        """Poll the station's metadata provider (if any) while it's cast."""
+        if not (station.get("nowplaying") or {}).get("type"):
+            return
+        self._np_station = station
+        self._np_task = asyncio.ensure_future(self._now_playing_loop(station))
+
+    def _stop_now_playing(self) -> None:
+        if self._np_task and not self._np_task.done():
+            self._np_task.cancel()
+        self._np_task = None
+        self._np_station = None
+
+    @property
+    def _radio_metadata_active(self) -> bool:
+        return self._np_task is not None and not self._np_task.done()
+
+    async def _now_playing_loop(self, station: Dict[str, Any]) -> None:
+        try:
+            if self._http is None or self._http.closed:
+                self._http = aiohttp.ClientSession()
+            last: Optional[Dict[str, str]] = None
+            while True:
+                info = await nowplaying.fetch(station, self._http)
+                if info and info != last:
+                    last = info
+                    self.apply_radio_now_playing(station, info)
+                await asyncio.sleep(RADIO_NOW_PLAYING_SEC)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            _LOG.debug("[%s] now-playing loop ended: %s", self._name, e)
+
+    def apply_radio_now_playing(self, station: Dict[str, Any], info: Dict[str, str]) -> None:
+        """Put the current track on the card; the station name moves to 'album'."""
+        title = info.get("title") or station["name"]
+        self._update({
+            Attributes.MEDIA_TITLE: title,
+            Attributes.MEDIA_ARTIST: info.get("artist", "") if info.get("title") else "",
+            Attributes.MEDIA_ALBUM: station["name"] if info.get("title") else "",
+            Attributes.MEDIA_IMAGE_URL: info.get("image_url") or station.get("image", ""),
+        })
 
     async def _cast_station(self, station: Dict[str, str]) -> bool:
         """Cast a radio stream URL to this speaker's Chromecast (off the loop)."""
@@ -267,14 +409,67 @@ class BeoPlayer:
         muted = bool(self.entity.attributes.get(Attributes.MUTED))
         return await self._client.set_mute(not muted)
 
-    async def _nudge_volume(self, delta: int) -> bool:
-        current = self.entity.attributes.get(Attributes.VOLUME, 0)
-        return await self._client.set_volume(max(0, min(100, current + delta)))
+    def _remember_source(self, source: str) -> None:
+        self._last_source = source
+        if self._config:
+            self._config.set_last_source(self._serial, source)
+
+    async def _power_on(self) -> bool:
+        """Wake the speaker and resume the last station/playlist. On its own
+        the A9 wakes to silence, so "on" without a source isn't much use."""
+        if self.entity.attributes.get(Attributes.STATE) == States.PLAYING:
+            return True
+        ok = await self._client.power_on()
+        if ok:
+            self._powered = True
+            if self.entity.attributes.get(Attributes.STATE) == States.OFF:
+                self._update({Attributes.STATE: States.ON})
+        if self._last_source and (self._last_source in self._radio or self._last_source in self._playlists):
+            resumed = await self._select_source({"source": self._last_source})
+            return resumed == ucapi.StatusCodes.OK
+        return ok
+
+    async def _power_off(self) -> bool:
+        ok = await self._client.standby()
+        if ok:
+            self._powered = False
+            await self._apply({"on": False})  # clears the card + source
+        return ok
+
+    async def _toggle_power(self) -> bool:
+        if self.entity.attributes.get(Attributes.STATE) == States.OFF:
+            return await self._power_on()
+        return await self._power_off()
+
+    async def _nudge_volume(self, direction: int) -> bool:
+        """Step the volume up (+1) or down (-1) by the configured percentage.
+
+        The base is read live from the speaker rather than from the entity cache:
+        on a fresh start the cache is 0 (so "up" would slam the speaker to 5%),
+        and the cache only catches up when the push notification lands. On a
+        successful set the cache is updated immediately, so rapid repeated
+        presses accumulate instead of re-sending the same level.
+        """
+        current = None
+        getter = getattr(self._client, "get_volume", None)
+        if getter:
+            current = await getter()
+        if current is None:
+            current = self.entity.attributes.get(Attributes.VOLUME, 0)
+        target = max(0, min(100, int(current) + direction * self._volume_step))
+        ok = await self._client.set_volume(target)
+        if ok:
+            self._update({Attributes.VOLUME: target})
+        return ok
 
     async def _set_volume(self, params: dict[str, Any] | None) -> ucapi.StatusCodes:
         if not params or "volume" not in params:
             return ucapi.StatusCodes.BAD_REQUEST
-        return _status(await self._client.set_volume(int(params["volume"])))
+        target = max(0, min(100, int(params["volume"])))
+        ok = await self._client.set_volume(target)
+        if ok:
+            self._update({Attributes.VOLUME: target})
+        return _status(ok)
 
     # ----- helpers ---------------------------------------------------------
 
@@ -283,6 +478,9 @@ class BeoPlayer:
 
     def close(self) -> None:
         """Release the Chromecast connection (called on shutdown)."""
+        self._stop_now_playing()
+        if self._http and not self._http.closed:
+            asyncio.ensure_future(self._http.close())
         self._cast.disconnect()
 
     # ----- multiroom (Beolink) --------------------------------------------
@@ -316,6 +514,9 @@ class BeoPlayer:
         mapped: Dict[str, Any] = {}
         if attrs.get("on") is not None:
             self._powered = attrs["on"]
+        if attrs.get("playing") is True:
+            # Legacy speakers send no explicit "on" event; playing implies on.
+            self._powered = True
         if "playing" in attrs and self._powered is not False:
             mapped[Attributes.STATE] = States.PLAYING if attrs["playing"] else States.PAUSED
         if attrs.get("on") is False:
@@ -325,7 +526,16 @@ class BeoPlayer:
         if "muted" in attrs:
             mapped[Attributes.MUTED] = attrs["muted"]
         if attrs.get("source_name"):
-            mapped[Attributes.SOURCE] = attrs["source_name"]
+            # While we're casting a radio station the speaker reports the raw
+            # "Chromecast built-in" source; keep the station label instead.
+            current = self.entity.attributes.get(Attributes.SOURCE) or ""
+            casting = current in self._radio and "chromecast" in attrs["source_name"].lower()
+            if not casting:
+                mapped[Attributes.SOURCE] = attrs["source_name"]
+                # Anything else playing means our cast (and its metadata) is over.
+                self._stop_now_playing()
+        if attrs.get("on") is False:
+            self._stop_now_playing()
 
         if self._powered is False:
             # Speaker is off. B&O mirrors other speakers' now-playing over the
@@ -334,7 +544,14 @@ class BeoPlayer:
                 Attributes.MEDIA_TITLE: "", Attributes.MEDIA_ARTIST: "",
                 Attributes.MEDIA_ALBUM: "", Attributes.MEDIA_IMAGE_URL: "",
                 Attributes.MEDIA_POSITION: 0, Attributes.MEDIA_DURATION: 0,
+                Attributes.SOURCE: "",
             })
+        elif self._radio_metadata_active:
+            # The speaker only echoes the cast's station name/logo; the
+            # now-playing poller owns the card while a station is playing.
+            pass
+        elif self._adopt_cast(attrs, mapped):
+            pass
         else:
             if "title" in attrs:
                 mapped[Attributes.MEDIA_TITLE] = attrs["title"]
@@ -357,6 +574,26 @@ class BeoPlayer:
             # mute toggle) don't depend on the API echoing the update back.
             self.entity.attributes.update(changed)
             self._api.configured_entities.update_attributes(self.entity.id, changed)
+
+
+_LOGO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logos")
+
+
+def resolve_image(image: str) -> str:
+    """Turn a ``logo:<file>`` reference into a base64 data URL (the Remote
+    accepts those for media_image_url); pass any other value through."""
+    if not image or not image.startswith("logo:"):
+        return image or ""
+    path = os.path.join(_LOGO_DIR, os.path.basename(image[len("logo:"):]))
+    try:
+        with open(path, "rb") as f:
+            data = base64.b64encode(f.read()).decode("ascii")
+    except OSError as e:
+        _LOG.warning("Logo %s not readable (%s); no artwork for that station", path, e)
+        return ""
+    ext = os.path.splitext(path)[1].lower().lstrip(".") or "png"
+    mime = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
+    return f"data:{mime};base64,{data}"
 
 
 def _entity_id(serial: str) -> str:

@@ -78,7 +78,7 @@ async def cmd_selftest(_args) -> int:
 
     try:
         import ucapi  # noqa: F401
-        from uc_intg_bang_olufsen import client, config, discovery, player, remote, setup, driver  # noqa: F401
+        from uc_intg_bang_olufsen import client, config, discovery, player, setup, driver  # noqa: F401
         _ok("all integration modules import cleanly")
     except Exception as e:
         _fail(f"integration import error: {e}")
@@ -112,11 +112,7 @@ async def cmd_selftest(_args) -> int:
         src = player.entity.attributes["source_list"]
         assert "Radio: Radio One" in src and "My Mix" in src
         assert player.entity.id == "beo_player_TEST"
-        from uc_intg_bang_olufsen.remote import BeoRemote
-        rem = BeoRemote(api, player, "Test Speaker", "TEST", stations)
-        assert rem.entity.id == "beo_remote_TEST"
-        assert "PLAY_PAUSE" in rem.entity.options["simple_commands"]
-        _ok("per-speaker player + remote entities construct and wire correctly")
+        _ok("per-speaker player entity constructs and wires correctly")
     except Exception as e:
         _fail(f"entity construction error: {e}")
         failures += 1

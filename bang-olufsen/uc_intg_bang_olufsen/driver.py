@@ -3,8 +3,9 @@
 Bang & Olufsen (Mozart) integration driver for Unfolded Circle Remote 2/3.
 
 Creates one independent media-player entity per configured speaker (Mozart or
-legacy). State is pushed from each speaker's notification stream, so there is no
-polling.
+legacy). That single entity is the whole UI: the now-playing card, transport,
+volume, and a source list of radio stations + Spotify playlists. State is pushed
+from each speaker's notification stream, so there is no polling.
 
 :copyright: (c) 2024
 :license: MPL-2.0, see LICENSE for more details.
@@ -21,7 +22,6 @@ import ucapi
 from uc_intg_bang_olufsen.config import BeoConfig
 from uc_intg_bang_olufsen.factory import AnyBeoClient, create_client
 from uc_intg_bang_olufsen.player import BeoPlayer
-from uc_intg_bang_olufsen.remote import BeoRemote
 from uc_intg_bang_olufsen.setup import BeoSetup
 from uc_intg_bang_olufsen.spotify import SpotifyClient
 
@@ -81,8 +81,11 @@ async def on_setup_complete():
     # entity definitions rather than keeping the old ones (add() won't overwrite).
     api.available_entities.clear()
     radio_stations = config.get_radio_stations()
+    volume_step = config.get_volume_step()
 
     # Optional Spotify playlists (cast to speakers via Spotify Connect).
+    if spotify:
+        await spotify.close()  # re-setup: don't leak the previous HTTP session
     spotify = None
     playlists: List[dict] = []
     if config.spotify_is_configured():
@@ -103,7 +106,7 @@ async def on_setup_complete():
         await spotify.get_devices()
         _LOG.info("Spotify enabled: %d playlist(s) shown (%d curated)", len(playlists), len(curated))
 
-    # Phase 1: build clients + players.
+    # Build clients + players.
     built = []  # (player, serial, name)
     for device in devices:
         serial = device.get("serial") or device.get("host")
@@ -118,7 +121,7 @@ async def on_setup_complete():
             "client": client,
             "sources": await client.get_sources(),
         }
-        player = BeoPlayer(api, speaker, radio_stations, spotify, playlists)
+        player = BeoPlayer(api, speaker, radio_stations, spotify, playlists, volume_step, config)
         players[player.entity.id] = player
         api.available_entities.add(player.entity)
         built.append((player, serial, speaker["name"]))
@@ -131,11 +134,6 @@ async def on_setup_complete():
         for player, _serial, name in built:
             other = next((n for _p, _s, n in built if n != name), name)
             player.set_multiroom(joiner, other)
-
-    # Phase 2: build each speaker's companion "control" remote.
-    for player, serial, name in built:
-        remote = BeoRemote(api, player, name, serial, radio_stations, playlists)
-        api.available_entities.add(remote.entity)
 
     # (Re)start the Spotify now-playing poller.
     if spotify_poll_task and not spotify_poll_task.done():
@@ -167,19 +165,26 @@ async def init_integration():
 
     api = ucapi.IntegrationAPI(loop)
     config = BeoConfig(os.path.join(api.config_dir_path, "config.json"))
+    api.add_listener(ucapi.Events.CONNECT, on_connect)
+    api.add_listener(ucapi.Events.SUBSCRIBE_ENTITIES, on_subscribe_entities)
+
+    # Build the entities BEFORE the WebSocket server is up. A Remote that already
+    # knows this driver reconnects within a second of the socket opening and
+    # subscribes immediately; if the entities aren't in available_entities yet,
+    # ucapi refuses the subscription and the Remote shows them UNAVAILABLE until
+    # the next reconnect.
+    if config.is_configured():
+        await on_setup_complete()
 
     setup = BeoSetup(config, on_setup_complete)
     await api.init(driver_json_path, setup.setup_handler)
-
-    api.add_listener(ucapi.Events.CONNECT, on_connect)
-    api.add_listener(ucapi.Events.SUBSCRIBE_ENTITIES, on_subscribe_entities)
 
 
 async def main():
     _LOG.info("Starting Bang & Olufsen Integration Driver")
     await init_integration()
     if config and config.is_configured():
-        await on_setup_complete()
+        await api.set_device_state(ucapi.DeviceStates.CONNECTED)
     else:
         await api.set_device_state(ucapi.DeviceStates.ERROR)
     _LOG.info("Integration is running.")

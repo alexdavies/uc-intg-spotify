@@ -238,63 +238,228 @@ def test_player_transport_routes_to_spotify_when_active():
     client.next_track.assert_awaited_once()
 
 
-def test_remote_playlist_button_plays_spotify():
-    from uc_intg_bang_olufsen.remote import BeoRemote
-    api, player, client = _player_for("Davies9", "A9", [])
-    player.play_spotify_playlist = AsyncMock(return_value=True)
-    remote = BeoRemote(api, player, "Davies9", "A9", [],
-                       [{"name": "Chill", "uri": "spotify:playlist:1"}])
-    cmd = next(iter(remote._playlist_cmds))
-    rc = asyncio.run(remote._send({"command": cmd}))
-    player.play_spotify_playlist.assert_awaited_once_with("spotify:playlist:1", "Chill")
-    assert rc == ucapi.StatusCodes.OK
+def test_cast_source_label_survives_chromecast_push():
+    api, player, client = _player_for(
+        "Davies9", "A9", [], [{"name": "triple j", "url": "http://x", "content_type": "audio/aac"}])
+    player.entity.attributes["source"] = f"{RADIO_PREFIX}triple j"
+    asyncio.run(client.on_update({"source_name": "Chromecast built-in", "on": True}))
+    assert player.entity.attributes["source"] == f"{RADIO_PREFIX}triple j"
+    # A genuinely different source still comes through.
+    asyncio.run(client.on_update({"source_name": "Spotify"}))
+    assert player.entity.attributes["source"] == "Spotify"
 
 
-def test_remote_multiroom_join_leave():
-    from uc_intg_bang_olufsen.remote import BeoRemote
-    api, player, client = _player_for("Davies9", "A9", [])
-    joiner = MagicMock()
-    joiner.beolink_join_latest = AsyncMock(return_value=True)
-    joiner.beolink_leave = AsyncMock(return_value=True)
-    player.set_multiroom(joiner, "Alex's Emerge")
-    remote = BeoRemote(api, player, "Davies9", "A9", [], [])
-
-    assert "JOIN_GROUP" in remote.entity.options["simple_commands"]
-    asyncio.run(remote._send({"command": "JOIN_GROUP"}))
-    joiner.beolink_join_latest.assert_awaited_once()
-    asyncio.run(remote._send({"command": "LEAVE_GROUP"}))
-    joiner.beolink_leave.assert_awaited_once()
-
-
-def test_remote_no_multiroom_page_when_solo():
-    from uc_intg_bang_olufsen.remote import BeoRemote
-    api, player, client = _player_for("Davies9", "A9", [])
-    remote = BeoRemote(api, player, "Davies9", "A9", [], [])
-    assert "JOIN_GROUP" not in remote.entity.options["simple_commands"]
-
-
-def test_remote_buttons_delegate_to_player():
+def test_volume_up_reads_live_level_and_updates_cache():
     from ucapi.media_player import Commands as MpCommands
-    from uc_intg_bang_olufsen.remote import BeoRemote
-    stations = [{"name": "triple j", "url": "http://x", "content_type": "audio/aac"}]
-    api, player, client = _player_for("Davies9", "A9", [], stations)
-    player.cmd_handler = AsyncMock(return_value=ucapi.StatusCodes.OK)
-    remote = BeoRemote(api, player, "Davies9", "A9", stations)
+    api, player, client = _player_for("Davies9", "A9", [])
+    # Entity cache is stale (0, as on a fresh start) but the speaker says 40%.
+    client.get_volume = AsyncMock(return_value=40)
+    client.set_volume = AsyncMock(return_value=True)
+    rc = asyncio.run(player.cmd_handler(player.entity, MpCommands.VOLUME_UP, None))
+    assert rc == ucapi.StatusCodes.OK
+    client.set_volume.assert_awaited_once_with(45)
+    assert player.entity.attributes["volume"] == 45
+    asyncio.run(player.cmd_handler(player.entity, MpCommands.VOLUME_DOWN, None))
+    client.set_volume.assert_awaited_with(35)  # live read (40) still wins
 
-    assert remote.entity.id == "beo_remote_A9"
-    cmds = remote.entity.options["simple_commands"]
-    assert "PLAY_PAUSE" in cmds and len(set(cmds)) == len(cmds)
 
-    # Transport button -> player's media-player handler.
-    asyncio.run(remote._send({"command": "PLAY_PAUSE"}))
-    assert player.cmd_handler.await_args.args[1] == MpCommands.PLAY_PAUSE
+def test_volume_nudge_falls_back_to_cache_and_clamps():
+    from ucapi.media_player import Commands as MpCommands
+    api, player, client = _player_for("Davies9", "A9", [])
+    client.get_volume = AsyncMock(return_value=None)
+    client.set_volume = AsyncMock(return_value=True)
+    player.entity.attributes["volume"] = 98
+    asyncio.run(player.cmd_handler(player.entity, MpCommands.VOLUME_UP, None))
+    client.set_volume.assert_awaited_once_with(100)
 
-    # Radio button -> select_source with the "Radio: <name>" source (casts).
-    radio_cmd = next(iter(remote._radio_cmds))
-    asyncio.run(remote._send({"command": radio_cmd}))
-    args = player.cmd_handler.await_args.args
-    assert args[1] == MpCommands.SELECT_SOURCE and args[2] == {"source": "Radio: triple j"}
+
+def test_volume_step_is_configurable():
+    api, player, client = _player_for("Davies9", "A9", [])
+    player._volume_step = 2
+    client.get_volume = AsyncMock(return_value=10)
+    client.set_volume = AsyncMock(return_value=True)
+    asyncio.run(player._nudge_volume(-1))
+    client.set_volume.assert_awaited_once_with(8)
+
+
+def test_toggle_power_uses_entity_state():
+    from ucapi.media_player import Commands as MpCommands, States
+    api, player, client = _player_for("Davies9", "A9", [])
+    client.power_on = AsyncMock(return_value=True)
+    client.standby = AsyncMock(return_value=True)
+    assert "toggle" in player.entity.features
+    player.entity.attributes["state"] = States.OFF
+    asyncio.run(player.cmd_handler(player.entity, MpCommands.TOGGLE, None))
+    client.power_on.assert_awaited_once()
+    player.entity.attributes["state"] = States.PLAYING
+    asyncio.run(player.cmd_handler(player.entity, MpCommands.TOGGLE, None))
+    client.standby.assert_awaited_once()
 
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ----- radio now-playing ------------------------------------------------------
+
+def test_nowplaying_parsers():
+    from uc_intg_bang_olufsen import nowplaying as np
+    abc = np.parse_abc({"now": {"recording": {"title": "What A Life", "artists": [{"name": "FISHER"}],
+                       "releases": [{"artwork": [{"url": "http://a/orig.jpg", "sizes": [
+                           {"aspect_ratio": "1x1", "width": 100, "url": "http://a/100.jpg"},
+                           {"aspect_ratio": "1x1", "width": 580, "url": "http://a/580.jpg"},
+                           {"aspect_ratio": "4x3", "width": 600, "url": "http://a/wide.jpg"}]}]}]}}})
+    assert abc == {"title": "What A Life", "artist": "FISHER", "image_url": "http://a/580.jpg"}
+    assert np.parse_abc({"now": {}}) is None
+
+    icy = np.parse_icy("StreamTitle='Selena Gomez ˗ Single Soon';StreamUrl='https://x/cover.jpg?ref=1';")
+    assert icy == {"title": "Single Soon", "artist": "Selena Gomez", "image_url": "https://x/cover.jpg?ref=1"}
+    assert np.parse_icy("StreamTitle='';") is None
+    assert np.parse_icy("StreamTitle='Just a jingle';")["artist"] == ""
+
+    seg = np.parse_bbc_segment({"data": [{"titles": {"primary": "Britten", "secondary": "Young Person's Guide"},
+                                          "image_url": "https://i/{recipe}/p.jpg", "offset": {"now_playing": True}}]})
+    assert seg == {"title": "Young Person's Guide", "artist": "Britten", "image_url": "https://i/640x640/p.jpg"}
+    assert np.parse_bbc_segment({"data": [{"titles": {"primary": "x"}, "offset": {"now_playing": False}}]}) is None
+    bc = np.parse_bbc_broadcast({"data": [{"programme": {"titles": {"primary": "BBC Proms", "secondary": "2026",
+                                                                    "tertiary": "New World"}, "image_url": None}}]})
+    assert bc == {"title": "New World", "artist": "BBC Proms · 2026", "image_url": ""}
+
+
+def test_radio_now_playing_owns_card_while_active():
+    from ucapi.media_player import States
+    station = {"name": "Energy Zürich", "url": "http://x", "content_type": "audio/mpeg",
+               "image": "http://logo.png", "nowplaying": {"type": "icy"}}
+    api, player, client = _player_for("Davies9", "A9", [], [station])
+    player._cast.play_sync = MagicMock(return_value=True)
+
+    async def run():
+        rc = await player._select_source({"source": f"{RADIO_PREFIX}Energy Zürich"})
+        assert rc == ucapi.StatusCodes.OK
+        assert player._radio_metadata_active  # poller started
+        player.apply_radio_now_playing(station, {"title": "Single Soon", "artist": "Selena Gomez", "image_url": "http://cover.jpg"})
+        a = player.entity.attributes
+        assert (a["media_title"], a["media_artist"], a["media_album"], a["media_image_url"]) == \
+            ("Single Soon", "Selena Gomez", "Energy Zürich", "http://cover.jpg")
+        # The A9 echoing the cast's station name must not clobber the track.
+        await client.on_update({"title": "Energy Zürich", "image_url": "http://logo.png"})
+        assert player.entity.attributes["media_title"] == "Single Soon"
+        # Switching to another source stops the poller.
+        await client.on_update({"source_name": "Spotify"})
+        assert not player._radio_metadata_active
+        player._stop_now_playing()
+    asyncio.run(run())
+
+
+def test_logo_reference_becomes_data_url(tmp_path):
+    from uc_intg_bang_olufsen import player as player_mod
+    (tmp_path / "x.png").write_bytes(b"\x89PNG fake")
+    player_mod._LOGO_DIR = str(tmp_path)
+    assert player_mod.resolve_image("logo:x.png").startswith("data:image/png;base64,")
+    assert player_mod.resolve_image("logo:missing.png") == ""
+    assert player_mod.resolve_image("https://x/y.png") == "https://x/y.png"
+    api, player, client = _player_for("Davies9", "A9", [], [{"name": "S", "url": "u", "image": "logo:x.png"}])
+    assert player._radio[f"{RADIO_PREFIX}S"]["image"].startswith("data:")
+
+
+def test_running_cast_is_adopted_from_push():
+    station = {"name": "Energy Zürich", "url": "http://x", "content_type": "audio/mpeg",
+               "image": "http://logo.png", "nowplaying": {"type": "icy"}}
+    api, player, client = _player_for("Davies9", "A9", [], [station])
+    player.entity.attributes["source"] = "Chromecast built-in"
+
+    async def run():
+        # The A9 echoes the cast's title with the station name.
+        await client.on_update({"title": "Energy Zürich", "image_url": "http://a9-echo.png"})
+        a = player.entity.attributes
+        assert a["source"] == f"{RADIO_PREFIX}Energy Zürich"
+        assert a["media_image_url"] == "http://logo.png"
+        assert player._radio_metadata_active
+        player._stop_now_playing()
+        # An unknown title on Chromecast is left alone.
+        await client.on_update({"title": "Some podcast"})
+        assert not player._radio_metadata_active
+    asyncio.run(run())
+
+
+def test_cast_transport_uses_chromecast_session():
+    from ucapi.media_player import Commands as MpCommands, States
+    station = {"name": "triple j", "url": "http://x", "content_type": "audio/aac", "image": ""}
+    api, player, client = _player_for("Davies9", "A9", [], [station])
+    client.stop = AsyncMock(return_value=True)
+    client.play_pause = AsyncMock(return_value=True)
+    player._cast.play_sync = MagicMock(return_value=True)
+    player._cast.stop_sync = MagicMock(return_value=True)
+    player._cast.pause_sync = MagicMock(return_value=True)
+
+    async def run():
+        await player._select_source({"source": f"{RADIO_PREFIX}triple j"})
+        assert player.entity.attributes["state"] == States.PLAYING
+        # STOP -> cast session, not the A9's (ignored) stream command.
+        assert await player.cmd_handler(player.entity, MpCommands.STOP, None) == ucapi.StatusCodes.OK
+        player._cast.stop_sync.assert_called_once(); client.stop.assert_not_awaited()
+        assert player.entity.attributes["state"] == States.PAUSED
+        assert player.entity.attributes["source"] == f"{RADIO_PREFIX}triple j"  # station kept
+        # PLAY while stopped re-casts the station.
+        await player.cmd_handler(player.entity, MpCommands.PLAY_PAUSE, None)
+        assert player._cast.play_sync.call_count == 2
+        assert player.entity.attributes["state"] == States.PLAYING
+        # PAUSE while playing pauses the cast.
+        await player.cmd_handler(player.entity, MpCommands.PLAY_PAUSE, None)
+        player._cast.pause_sync.assert_called_once(); client.play_pause.assert_not_awaited()
+        assert player.entity.attributes["state"] == States.PAUSED
+        # Not casting (e.g. Spotify source): the normal path is used.
+        player.entity.attributes["source"] = "Spotify"
+        player._spotify = None
+        await player.cmd_handler(player.entity, MpCommands.STOP, None)
+        client.stop.assert_awaited_once()
+    asyncio.run(run())
+
+
+def test_power_on_resumes_last_source(tmp_path):
+    from ucapi.media_player import Commands as MpCommands, States
+    from uc_intg_bang_olufsen.config import BeoConfig
+    from uc_intg_bang_olufsen.player import BeoPlayer
+    cfg = BeoConfig(str(tmp_path / "config.json"))
+    station = {"name": "triple j", "url": "http://x", "content_type": "audio/aac", "image": ""}
+    client = MagicMock(); client.host = "10.0.0.9"; client.power_on = AsyncMock(return_value=True)
+    speaker = {"serial": "A9", "name": "Davies9", "client": client, "sources": []}
+    player = BeoPlayer(MagicMock(), speaker, [station], None, [], config=cfg)
+    player._cast.play_sync = MagicMock(return_value=True)
+
+    async def run():
+        # Nothing remembered yet: plain power on.
+        player.entity.attributes["state"] = States.OFF
+        await player.cmd_handler(player.entity, MpCommands.ON, None)
+        client.power_on.assert_awaited_once(); player._cast.play_sync.assert_not_called()
+        # Play a station, switch off, power on -> the station is re-cast.
+        await player._select_source({"source": f"{RADIO_PREFIX}triple j"})
+        assert cfg.get_last_source("A9") == f"{RADIO_PREFIX}triple j"
+        player.entity.attributes["state"] = States.OFF
+        rc = await player.cmd_handler(player.entity, MpCommands.ON, None)
+        assert rc == ucapi.StatusCodes.OK and player._cast.play_sync.call_count == 2
+        assert player.entity.attributes["state"] == States.PLAYING
+        player._stop_now_playing()
+    asyncio.run(run())
+
+    # A fresh player (driver restart) still knows the last source.
+    again = BeoPlayer(MagicMock(), speaker, [station], None, [], config=BeoConfig(str(tmp_path / "config.json")))
+    assert again._last_source == f"{RADIO_PREFIX}triple j"
+
+
+def test_setup_imports_pasted_config(tmp_path):
+    from uc_intg_bang_olufsen.config import BeoConfig
+    from uc_intg_bang_olufsen.setup import BeoSetup
+    cfg = BeoConfig(str(tmp_path / "config.json"))
+    done = AsyncMock()
+    setup = BeoSetup(cfg, done)
+    pasted = '{"devices": [{"host": "10.0.0.9", "name": "Davies9", "serial": "1", "protocol": "legacy"}], "spotify_access_token": "t", "spotify_refresh_token": "r"}'
+    msg = ucapi.DriverSetupRequest(False, {"config_json": pasted, "spotify_client_id": "", "spotify_client_secret": ""})
+    result = asyncio.run(setup.setup_handler(msg))
+    assert isinstance(result, ucapi.SetupComplete)
+    done.assert_awaited_once()
+    assert cfg.get_devices()[0]["name"] == "Davies9" and cfg.spotify_is_configured()
+    # Garbage is rejected rather than wiping the config.
+    bad = ucapi.DriverSetupRequest(False, {"config_json": "{not json"})
+    assert isinstance(asyncio.run(setup.setup_handler(bad)), ucapi.SetupError)
+    assert cfg.get_devices()[0]["name"] == "Davies9"

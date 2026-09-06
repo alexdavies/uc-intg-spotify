@@ -104,13 +104,26 @@ class BeoCast:
             # streams can take a moment to settle).
             return True
 
-    def stop_sync(self) -> None:
+    def stop_sync(self) -> bool:
+        """Stop the cast session's media (the speaker's own transport commands
+        are ignored while its source is Chromecast)."""
+        return self._media_command("stop")
+
+    def pause_sync(self) -> bool:
+        return self._media_command("pause")
+
+    def resume_sync(self) -> bool:
+        return self._media_command("play")
+
+    def _media_command(self, name: str) -> bool:
         with self._lock:
-            if self._cast is not None:
-                try:
-                    self._cast.media_controller.stop()
-                except Exception:  # noqa: BLE001
-                    pass
+            try:
+                cast = self._connect()
+                getattr(cast.media_controller, name)()
+                return True
+            except Exception as e:  # noqa: BLE001
+                _LOG.error("Cast %s on %s failed: %s", name, self._name, e)
+                return False
 
     def disconnect(self) -> None:
         with self._lock:

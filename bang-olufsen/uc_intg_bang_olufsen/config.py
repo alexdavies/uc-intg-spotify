@@ -19,10 +19,22 @@ _LOG = logging.getLogger(__name__)
 # (the B&O radio API can't be driven locally — see API_NOTES.md). Editable in
 # config.json under "radio_stations"; these are the seeded defaults.
 DEFAULT_RADIO_STATIONS: List[Dict[str, str]] = [
-    {"name": "triple j", "url": "https://live-radio01.mediahubaustralia.com/2TJW/aac/", "content_type": "audio/aac", "image": "https://static.airable.io/15/36/215005.png"},
-    {"name": "Energy Zürich", "url": "https://energyzuerich.ice.infomaniak.ch/energyzuerich-high.mp3", "content_type": "audio/mpeg", "image": "https://static.airable.io/74/24/436752.png"},
-    {"name": "BBC Radio 3", "url": "https://lsn.lv/bbcradio.m3u8?station=bbc_radio_three&bitrate=320000", "content_type": "application/x-mpegurl", "image": ""},
+    # ABC's mediahubaustralia AAC endpoint started answering 403 (2026-09); the
+    # akamaized HLS master plays fine on the Chromecast default receiver.
+    {"name": "triple j", "url": "https://mediaserviceslive.akamaized.net/hls/live/2038308/triplejnsw/masterhq.m3u8", "content_type": "application/vnd.apple.mpegurl",
+     "image": "logo:triple_j.png",
+     "nowplaying": {"type": "abc", "service": "triplej"}},
+    {"name": "Energy Zürich", "url": "https://energyzuerich.ice.infomaniak.ch/energyzuerich-high.mp3", "content_type": "audio/mpeg",
+     "image": "logo:energy_zuerich.png",
+     "nowplaying": {"type": "icy"}},
+    {"name": "BBC Radio 3", "url": "https://lsn.lv/bbcradio.m3u8?station=bbc_radio_three&bitrate=320000", "content_type": "application/x-mpegurl",
+     "image": "logo:bbc_radio_3.png",
+     "nowplaying": {"type": "bbc", "service": "bbc_radio_three"}},
 ]
+# "image" is a URL, or "logo:<file>" for a PNG bundled in uc_intg_bang_olufsen/logos
+# (sent to the Remote as a base64 data URL, so no external host is involved).
+# "nowplaying" (optional) names a metadata provider in nowplaying.py so the card
+# shows the current track while the station is cast: abc | icy | bbc.
 
 
 class BeoConfig:
@@ -128,10 +140,39 @@ class BeoConfig:
     def get_playlist_limit(self) -> int:
         return int(self._data.get("spotify_playlist_limit", 12))
 
+    def get_last_source(self, serial: str) -> Optional[str]:
+        """The station/playlist last selected on a speaker (power-on resumes it)."""
+        return (self._data.get("last_sources") or {}).get(str(serial))
+
+    def set_last_source(self, serial: str, source: str) -> bool:
+        last = self._data.setdefault("last_sources", {})
+        if last.get(str(serial)) == source:
+            return True
+        last[str(serial)] = source
+        return self._save()
+
+    def get_volume_step(self) -> int:
+        """Percent change per volume up/down press (config "volume_step")."""
+        return max(1, int(self._data.get("volume_step", 5)))
+
     def get_playlist_prefix(self) -> str:
         """Marker prefix for curated playlists; when any exist, only these are
         shown on the remote (and the marker is stripped from the button label)."""
         return self._data.get("spotify_playlist_prefix", "◆")
+
+    def import_json(self, raw: str) -> bool:
+        """Replace the whole configuration with a pasted config.json (used to
+        migrate from an off-device driver). Must contain a device list."""
+        try:
+            data = json.loads(raw)
+        except ValueError as e:
+            _LOG.error("config import: invalid JSON: %s", e)
+            return False
+        if not isinstance(data, dict) or not isinstance(data.get("devices"), list) or not data["devices"]:
+            _LOG.error("config import: no 'devices' list in pasted config")
+            return False
+        self._data = data
+        return self._save()
 
     def reset(self) -> bool:
         self._data = {"devices": []}
