@@ -13,11 +13,15 @@ Spotify integration (`spotify`). You can run all of them side by side.
 
 ---
 
-> **Current state (2026-09-06):** the Remote runs the **external** driver from
-> the Mac (`ws://alexanders-mbp.local:9090`, config in `~/config.json`); the
-> on-device 0.1.1 build was removed so the Mac copy can be iterated on. To go
-> back to resident, build 0.2.0+ via CI, delete the external driver on the
-> Remote and install the archive (Route B).
+> **Current state (2026-09-06, evening):** the Remote runs the **resident**
+> 0.2.0 build (tag `bo-v0.2.0`, branch `beo-0.2`), installed via
+> `POST /api/intg/install` with the config migrated through the setup screen's
+> `config_json` import. No Mac driver is needed any more. Note: the Remote stops
+> external drivers when it sleeps ("System suspend: stopping active external
+> drivers" in its log), which is another reason the resident build is the one
+> to use. After configuring entities on a fresh install, a
+> `PUT /api/intg/instances/bang_olufsen_local.main?cmd=DISCONNECT` then
+> `?cmd=CONNECT` was needed before the first state arrived.
 
 ## Route A — run it off-device first (recommended, zero risk)
 
