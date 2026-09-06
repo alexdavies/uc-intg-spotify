@@ -398,8 +398,8 @@ def test_cast_transport_uses_chromecast_session():
         # STOP -> cast session, not the A9's (ignored) stream command.
         assert await player.cmd_handler(player.entity, MpCommands.STOP, None) == ucapi.StatusCodes.OK
         player._cast.stop_sync.assert_called_once(); client.stop.assert_not_awaited()
-        assert player.entity.attributes["state"] == States.PAUSED
-        assert player.entity.attributes["source"] == f"{RADIO_PREFIX}triple j"  # station kept
+        assert player.entity.attributes["state"] == States.ON  # idle, station kept
+        assert player.entity.attributes["source"] == f"{RADIO_PREFIX}triple j"
         # PLAY while stopped re-casts the station.
         await player.cmd_handler(player.entity, MpCommands.PLAY_PAUSE, None)
         assert player._cast.play_sync.call_count == 2
@@ -463,3 +463,21 @@ def test_setup_imports_pasted_config(tmp_path):
     bad = ucapi.DriverSetupRequest(False, {"config_json": "{not json"})
     assert isinstance(asyncio.run(setup.setup_handler(bad)), ucapi.SetupError)
     assert cfg.get_devices()[0]["name"] == "Davies9"
+
+
+def test_cast_stop_quits_receiver_app_and_pause_falls_back():
+    from uc_intg_bang_olufsen.cast import BeoCast
+    c = BeoCast("10.0.0.9", "Davies9")
+    fake = MagicMock(); fake.media_controller.status.media_session_id = None
+    c._connect = MagicMock(return_value=fake)
+    assert c.stop_sync() is True
+    fake.quit_app.assert_called_once(); fake.media_controller.stop.assert_not_called()
+    # pause with no session id -> asks for status, then ends the cast.
+    fake.quit_app.reset_mock()
+    assert c.pause_sync() is True
+    fake.media_controller.update_status.assert_called(); fake.quit_app.assert_called_once()
+    fake.media_controller.pause.assert_not_called()
+    # pause with a session id -> real pause.
+    fake.media_controller.status.media_session_id = 7; fake.quit_app.reset_mock()
+    assert c.pause_sync() is True
+    fake.media_controller.pause.assert_called_once(); fake.quit_app.assert_not_called()

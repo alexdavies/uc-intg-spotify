@@ -105,24 +105,49 @@ class BeoCast:
             return True
 
     def stop_sync(self) -> bool:
-        """Stop the cast session's media (the speaker's own transport commands
-        are ignored while its source is Chromecast)."""
-        return self._media_command("stop")
-
-    def pause_sync(self) -> bool:
-        return self._media_command("pause")
-
-    def resume_sync(self) -> bool:
-        return self._media_command("play")
-
-    def _media_command(self, name: str) -> bool:
+        """End the cast: quit the receiver app. A media-level STOP only pauses
+        the live stream and leaves "Casting: <station>" on the speaker (its
+        source stays Chromecast); quitting the app returns it to idle. Verified
+        on the A9."""
         with self._lock:
             try:
                 cast = self._connect()
-                getattr(cast.media_controller, name)()
+                cast.quit_app()
                 return True
             except Exception as e:  # noqa: BLE001
-                _LOG.error("Cast %s on %s failed: %s", name, self._name, e)
+                _LOG.error("Cast stop on %s failed: %s", self._name, e)
+                return False
+
+    def pause_sync(self) -> bool:
+        """Pause the cast. Needs a media session id, which a freshly opened
+        connection doesn't have yet; ask for status first and, failing that,
+        end the cast instead (a live stream can't resume anyway)."""
+        with self._lock:
+            try:
+                cast = self._connect()
+                mc = cast.media_controller
+                if not mc.status.media_session_id:
+                    mc.update_status()
+                    for _ in range(10):
+                        if mc.status.media_session_id:
+                            break
+                        time.sleep(0.2)
+                if mc.status.media_session_id:
+                    mc.pause()
+                else:
+                    cast.quit_app()
+                return True
+            except Exception as e:  # noqa: BLE001
+                _LOG.error("Cast pause on %s failed: %s", self._name, e)
+                return False
+
+    def resume_sync(self) -> bool:
+        with self._lock:
+            try:
+                self._connect().media_controller.play()
+                return True
+            except Exception as e:  # noqa: BLE001
+                _LOG.error("Cast resume on %s failed: %s", self._name, e)
                 return False
 
     def disconnect(self) -> None:

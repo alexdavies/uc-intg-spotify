@@ -340,8 +340,9 @@ class BeoPlayer:
         ok = await loop.run_in_executor(None, self._cast.stop_sync)
         if ok:
             self._stop_now_playing()
-            # Keep the station on the card so play can restart it.
-            self._update({Attributes.STATE: States.PAUSED})
+            # Keep the station on the card so play can restart it; ON = idle.
+            self._update({Attributes.STATE: States.ON,
+                          Attributes.MEDIA_POSITION: 0, Attributes.MEDIA_DURATION: 0})
         return ok
 
     async def _cast_play_pause(self) -> bool:
