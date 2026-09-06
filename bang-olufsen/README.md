@@ -62,7 +62,7 @@ favourites and multiroom — none of which Spotify can do.
 - **Honest volume handling:** the legacy A9 silently ignores volume writes while
   in standby (it still answers HTTP 200); the driver reads the level back and
   reports the command as failed instead of pretending. Volume up/down step is
-  `volume_step` percent in `config.json` (default 5).
+  `volume_step` percent in `config.json` (default 2).
 
 ## Setup
 

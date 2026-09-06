@@ -135,6 +135,9 @@ async def on_setup_complete():
             other = next((n for _p, _s, n in built if n != name), name)
             player.set_multiroom(joiner, other)
 
+    # One entity per speaker: the media player carries now-playing plus the
+    # source picker (radio, playlists, inputs, multiroom). No separate remote.
+
     # (Re)start the Spotify now-playing poller.
     if spotify_poll_task and not spotify_poll_task.done():
         spotify_poll_task.cancel()

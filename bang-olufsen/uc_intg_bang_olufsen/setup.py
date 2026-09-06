@@ -69,14 +69,11 @@ class BeoSetup:
             await self._setup_complete_callback()
             return ucapi.SetupComplete()
 
-        _LOG.info("Discovering Bang & Olufsen Mozart devices on the network...")
+        _LOG.info("Discovering Bang & Olufsen devices on the network...")
         self._discovered = await discover_devices()
 
-        choices = [
-            {"id": d["serial"], "label": _device_label(d)}
-            for d in self._discovered
-        ]
-
+        # One checkbox per discovered speaker, all ticked, so every speaker is
+        # added by default (the common case is "add them all"); untick to skip.
         settings = [
             {
                 "id": "info",
@@ -85,21 +82,20 @@ class BeoSetup:
                     "label": {
                         "value": {
                             "en": (
-                                f"Found {len(choices)} Mozart speaker(s) on your network. "
-                                "Select the ones to add. If a speaker is missing (e.g. an "
-                                "older Beoplay A9, or a device on another subnet), enter its "
-                                "IP address below."
+                                f"Found {len(self._discovered)} speaker(s) on your network. "
+                                "All are ticked — untick any you don't want to add. If a "
+                                "speaker is missing (e.g. on another subnet), add it by IP below."
                             )
                         }
                     }
                 },
             }
         ]
-        if choices:
+        for index, device in enumerate(self._discovered):
             settings.append({
-                "id": "selected",
-                "label": {"en": "Speakers to add"},
-                "field": {"dropdown": {"value": choices[0]["id"], "items": choices}},
+                "id": f"add_{index}",
+                "label": _device_label(device),
+                "field": {"checkbox": {"value": True}},
             })
         settings.append({
             "id": "manual_host",
@@ -116,13 +112,13 @@ class BeoSetup:
 
         devices: List[dict] = []
 
-        selected = msg.input_values.get("selected")
-        if selected:
-            match = next((d for d in self._discovered if d["serial"] == selected), None)
-            if match:
-                # Discovered via the Mozart (_bangolufsen) mDNS service.
-                match.setdefault("protocol", PROTOCOL_MOZART)
-                devices.append(match)
+        # Collect every discovered speaker whose checkbox is ticked. UC returns
+        # checkbox values as booleans, but accept the string forms defensively.
+        for index, device in enumerate(self._discovered):
+            value = msg.input_values.get(f"add_{index}")
+            if value in (True, "true", "True", "on", 1):
+                device.setdefault("protocol", PROTOCOL_MOZART)
+                devices.append(device)
 
         manual_host = (msg.input_values.get("manual_host") or "").strip()
         if manual_host:

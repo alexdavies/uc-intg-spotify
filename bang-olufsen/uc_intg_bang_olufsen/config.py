@@ -153,7 +153,7 @@ class BeoConfig:
 
     def get_volume_step(self) -> int:
         """Percent change per volume up/down press (config "volume_step")."""
-        return max(1, int(self._data.get("volume_step", 5)))
+        return max(1, int(self._data.get("volume_step", 2)))
 
     def get_playlist_prefix(self) -> str:
         """Marker prefix for curated playlists; when any exist, only these are

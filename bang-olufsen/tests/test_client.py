@@ -257,10 +257,10 @@ def test_volume_up_reads_live_level_and_updates_cache():
     client.set_volume = AsyncMock(return_value=True)
     rc = asyncio.run(player.cmd_handler(player.entity, MpCommands.VOLUME_UP, None))
     assert rc == ucapi.StatusCodes.OK
-    client.set_volume.assert_awaited_once_with(45)
-    assert player.entity.attributes["volume"] == 45
+    client.set_volume.assert_awaited_once_with(42)  # default step is 2%
+    assert player.entity.attributes["volume"] == 42
     asyncio.run(player.cmd_handler(player.entity, MpCommands.VOLUME_DOWN, None))
-    client.set_volume.assert_awaited_with(35)  # live read (40) still wins
+    client.set_volume.assert_awaited_with(38)  # live read (40) still wins
 
 
 def test_volume_nudge_falls_back_to_cache_and_clamps():
