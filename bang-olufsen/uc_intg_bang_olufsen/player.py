@@ -425,10 +425,16 @@ class BeoPlayer:
         """Cast a radio stream URL to this speaker's Chromecast (off the loop)."""
         loop = asyncio.get_event_loop()
         try:
+            # Only an http(s) image may go into the cast as thumbnail: a bundled
+            # logo is a 20-40 KB data URL, and above ~30 KB the A9's receiver
+            # silently drops the whole LOAD (verified: Energy Zürich's 36 KB logo
+            # made every switch to it fail while triple j's 23 KB one worked).
+            image = station.get("image") or ""
+            thumb = image if image.startswith(("http://", "https://")) else None
             return await loop.run_in_executor(
                 None, self._cast.play_sync,
                 station["url"], station.get("content_type", "audio/mpeg"),
-                station["name"], station.get("image"),
+                station["name"], thumb,
             )
         except Exception as e:  # noqa: BLE001
             _LOG.error("[%s] cast of %r failed: %s", self._name, station.get("name"), e)

@@ -545,3 +545,14 @@ def test_now_playing_session_uses_certifi_ca_bundle():
     from uc_intg_bang_olufsen import player as player_mod
     src = inspect.getsource(player_mod.BeoPlayer._now_playing_loop)
     assert "certifi.where()" in src and "TCPConnector(ssl=" in src
+
+
+def test_cast_never_sends_data_url_as_thumbnail():
+    station = {"name": "Energy Zürich", "url": "http://x", "content_type": "audio/mpeg",
+               "image": "data:image/png;base64,AAAA"}
+    api, player, client = _player_for("Davies9", "A9", [], [station])
+    player._cast.play_sync = MagicMock(return_value=True)
+    asyncio.run(_select_and_cast(player, f"{RADIO_PREFIX}Energy Zürich"))
+    player._cast.play_sync.assert_called_once_with("http://x", "audio/mpeg", "Energy Zürich", None)
+    # The Remote's card still gets the data URL.
+    assert player.entity.attributes["media_image_url"].startswith("data:")
