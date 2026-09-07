@@ -15,9 +15,11 @@ import base64
 import logging
 import os
 import re
+import ssl
 from typing import Any, Dict, List, Optional
 
 import aiohttp
+import certifi
 import ucapi
 from ucapi.media_player import Attributes, Commands, DeviceClasses, Features, MediaType, States
 
@@ -379,7 +381,10 @@ class BeoPlayer:
     async def _now_playing_loop(self, station: Dict[str, Any]) -> None:
         try:
             if self._http is None or self._http.closed:
-                self._http = aiohttp.ClientSession()
+                # The Remote has no system CA bundle (see spotify.py): use
+                # certifi's, or every HTTPS lookup fails silently on-device.
+                self._http = aiohttp.ClientSession(
+                    connector=aiohttp.TCPConnector(ssl=ssl.create_default_context(cafile=certifi.where())))
             last: Optional[Dict[str, str]] = None
             while True:
                 info = await nowplaying.fetch(station, self._http)

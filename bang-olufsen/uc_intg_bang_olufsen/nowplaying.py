@@ -32,6 +32,9 @@ _UA = {"User-Agent": "uc-intg-bang-olufsen/0.2 (+https://github.com/alexdavies/u
 
 NowPlaying = Dict[str, str]
 
+# Stations whose lookup failure has already been reported (warn once, not every 20 s).
+_warned: set = set()
+
 
 async def fetch(station: Dict[str, Any], session: aiohttp.ClientSession) -> Optional[NowPlaying]:
     """Look up what a station is playing, per its ``nowplaying`` config."""
@@ -45,7 +48,13 @@ async def fetch(station: Dict[str, Any], session: aiohttp.ClientSession) -> Opti
         if kind == "bbc":
             return await _bbc(cfg.get("service", "bbc_radio_three"), session)
     except Exception as e:  # noqa: BLE001 - metadata is best-effort
-        _LOG.debug("now-playing lookup (%s) failed for %s: %s", kind, station.get("name"), e)
+        name = station.get("name")
+        if name not in _warned:
+            _warned.add(name)
+            _LOG.warning("now-playing lookup (%s) failed for %s: %s (further failures logged at debug)",
+                         kind, name, e)
+        else:
+            _LOG.debug("now-playing lookup (%s) failed for %s: %s", kind, name, e)
     return None
 
 

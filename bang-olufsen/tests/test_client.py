@@ -537,3 +537,11 @@ def test_cast_play_confirms_own_stream_and_reconnects_fresh():
         assert c.play_sync("http://x", "audio/aac", "triple j", None) is False
     finally:
         cast_mod.time.sleep = real_sleep; cast_mod.time.time = real_time
+
+
+def test_now_playing_session_uses_certifi_ca_bundle():
+    """The Remote has no system CA store; the poller must use certifi like spotify.py."""
+    import inspect
+    from uc_intg_bang_olufsen import player as player_mod
+    src = inspect.getsource(player_mod.BeoPlayer._now_playing_loop)
+    assert "certifi.where()" in src and "TCPConnector(ssl=" in src
