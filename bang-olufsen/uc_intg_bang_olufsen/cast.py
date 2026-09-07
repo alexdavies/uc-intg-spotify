@@ -96,33 +96,69 @@ class BeoCast:
 
     def play_sync(self, url: str, content_type: str, title: str,
                   image: Optional[str] = None) -> bool:
-        """Cast a stream URL and return whether it reached an active/playing state."""
+        """Cast a stream URL and return whether the receiver actually took it.
+
+        Always connects fresh (about half a second by IP): a cached socket can
+        look connected but be dead after the Remote or its WiFi has slept, in
+        which case the LOAD silently goes nowhere. Success means a media status
+        for *this* stream was seen in a playing/buffering state; anything else
+        is a failure (one retry with a new connection).
+        """
         with self._lock:
-            cast = self._connect()
-            mc = cast.media_controller
-            mc.play_media(url, content_type, title=title, stream_type="LIVE",
-                          thumb=image)
-            try:
-                mc.block_until_active(timeout=10)
-            except Exception:  # noqa: BLE001 - fall through to the status poll
-                pass
-            # Confirm it actually started rather than erroring out immediately.
-            for _ in range(6):
+            for attempt in (1, 2):
+                self._teardown()
                 try:
-                    mc.update_status()
-                except Exception:  # noqa: BLE001 - transient reconnect; retry
-                    time.sleep(1)
-                    continue
-                state = mc.status.player_state
-                if state in ("PLAYING", "BUFFERING"):
-                    return True
-                if state == "IDLE" and mc.status.idle_reason == "ERROR":
-                    _LOG.error("Cast of %r to %s failed (receiver error)", title, self._name)
-                    return False
-                time.sleep(1)
-            # Sent and not errored within the window; treat as success (live
-            # streams can take a moment to settle).
-            return True
+                    cast = self._connect()
+                    mc = cast.media_controller
+                    mc.play_media(url, content_type, title=title, stream_type="LIVE",
+                                  thumb=image)
+                    try:
+                        mc.block_until_active(timeout=10)
+                    except Exception:  # noqa: BLE001 - fall through to the status poll
+                        pass
+                    deadline = time.time() + 12
+                    while time.time() < deadline:
+                        try:
+                            mc.update_status()
+                        except Exception:  # noqa: BLE001 - transient; retry
+                            time.sleep(0.5)
+                            continue
+                        st = mc.status
+                        ours = (st.content_id == url) or (st.title == title)
+                        if ours and st.player_state in ("PLAYING", "BUFFERING"):
+                            _LOG.info("Cast of %r to %s confirmed (%s, session %s)",
+                                      title, self._name, st.player_state, st.media_session_id)
+                            return True
+                        if ours and st.player_state == "IDLE" and st.idle_reason == "ERROR":
+                            _LOG.error("Cast of %r to %s failed (receiver error)", title, self._name)
+                            return False
+                        time.sleep(0.5)
+                    _LOG.warning("Cast of %r to %s not confirmed (attempt %d; last status %s/%r)",
+                                 title, self._name, attempt, mc.status.player_state, mc.status.title)
+                except Exception as e:  # noqa: BLE001
+                    _LOG.error("Cast of %r to %s failed on attempt %d: %s", title, self._name, attempt, e)
+            return False
+
+    def _live_cast(self):
+        """A connection that demonstrably answers. A cached socket may be dead
+        after a sleep while still claiming to be connected, so ask the receiver
+        for its status and reconnect if nothing comes back."""
+        cast = self._connect()
+        if self._responds(cast):
+            return cast
+        _LOG.info("Cast connection to %s is stale; reconnecting", self._name)
+        self._teardown()
+        return self._connect()
+
+    @staticmethod
+    def _responds(cast, timeout: float = 2.0) -> bool:
+        got = threading.Event()
+        try:
+            cast.socket_client.receiver_controller.update_status(
+                callback_function=lambda *_a, **_k: got.set())
+        except Exception:  # noqa: BLE001
+            return False
+        return got.wait(timeout)
 
     def stop_sync(self) -> bool:
         """End the cast: quit the receiver app. A media-level STOP only pauses
@@ -131,8 +167,7 @@ class BeoCast:
         on the A9."""
         with self._lock:
             try:
-                cast = self._connect()
-                cast.quit_app()
+                self._live_cast().quit_app()
                 return True
             except Exception as e:  # noqa: BLE001
                 _LOG.error("Cast stop on %s failed: %s", self._name, e)
@@ -144,7 +179,7 @@ class BeoCast:
         end the cast instead (a live stream can't resume anyway)."""
         with self._lock:
             try:
-                cast = self._connect()
+                cast = self._live_cast()
                 mc = cast.media_controller
                 if not mc.status.media_session_id:
                     mc.update_status()
@@ -164,7 +199,7 @@ class BeoCast:
     def resume_sync(self) -> bool:
         with self._lock:
             try:
-                self._connect().media_controller.play()
+                self._live_cast().media_controller.play()
                 return True
             except Exception as e:  # noqa: BLE001
                 _LOG.error("Cast resume on %s failed: %s", self._name, e)

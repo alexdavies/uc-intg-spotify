@@ -488,6 +488,7 @@ def test_cast_stop_quits_receiver_app_and_pause_falls_back():
     c = BeoCast("10.0.0.9", "Davies9")
     fake = MagicMock(); fake.media_controller.status.media_session_id = None
     c._connect = MagicMock(return_value=fake)
+    c._responds = MagicMock(return_value=True)  # cached connection answers
     assert c.stop_sync() is True
     fake.quit_app.assert_called_once(); fake.media_controller.stop.assert_not_called()
     # pause with no session id -> asks for status, then ends the cast.
@@ -515,3 +516,24 @@ def test_failed_cast_is_reported_on_card():
         assert "failed" in player.entity.attributes["media_title"]
         assert not player._radio_metadata_active
     asyncio.run(run())
+
+
+def test_cast_play_confirms_own_stream_and_reconnects_fresh():
+    from uc_intg_bang_olufsen.cast import BeoCast
+    c = BeoCast("10.0.0.9", "Davies9")
+    fake = MagicMock(); st = fake.media_controller.status
+    st.content_id = "http://x"; st.title = "triple j"; st.player_state = "BUFFERING"; st.media_session_id = 5
+    c._connect = MagicMock(return_value=fake); c._teardown = MagicMock()
+    assert c.play_sync("http://x", "audio/aac", "triple j", None) is True
+    c._teardown.assert_called()  # always a fresh connection per cast
+    fake.media_controller.play_media.assert_called_once()
+    # A status that never reflects our stream is a failure, not a silent success.
+    st.title = "old station"; st.content_id = "http://old"; st.player_state = "PAUSED"
+    import uc_intg_bang_olufsen.cast as cast_mod
+    real_sleep = cast_mod.time.sleep; cast_mod.time.sleep = lambda *_: None
+    real_time = cast_mod.time.time; ticks = iter(range(0, 10000))
+    cast_mod.time.time = lambda: next(ticks) * 2.0  # fast-forward the deadline
+    try:
+        assert c.play_sync("http://x", "audio/aac", "triple j", None) is False
+    finally:
+        cast_mod.time.sleep = real_sleep; cast_mod.time.time = real_time
