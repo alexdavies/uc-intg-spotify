@@ -45,12 +45,20 @@ spotify_poll_task: Optional[asyncio.Task] = None
 SPOTIFY_POLL_SEC = 5
 
 
+# Set to make the Spotify poller fetch immediately (e.g. the Remote just woke).
+spotify_poll_wake = asyncio.Event()
+
+
 async def spotify_poll_loop():
     """Keep the active Spotify speaker's now-playing card in sync. The speakers'
     own push doesn't track Spotify Connect track changes (and the legacy A9 sends
     no artwork), so poll Spotify and route the update to the matching speaker."""
     while True:
-        await asyncio.sleep(SPOTIFY_POLL_SEC)
+        spotify_poll_wake.clear()
+        try:
+            await asyncio.wait_for(spotify_poll_wake.wait(), timeout=SPOTIFY_POLL_SEC)
+        except asyncio.TimeoutError:
+            pass
         if not spotify:
             continue
         try:
@@ -153,6 +161,15 @@ async def on_connect():
         await api.set_device_state(ucapi.DeviceStates.CONNECTED)
 
 
+async def on_exit_standby():
+    """The Remote woke up. The driver was frozen with it, so refresh everything
+    now rather than waiting for the next poll (that wait showed up as an
+    ~8 s stale now-playing card after wake)."""
+    _LOG.info("Remote left standby: refreshing speakers")
+    spotify_poll_wake.set()
+    await asyncio.gather(*(p.on_wake() for p in players.values()), return_exceptions=True)
+
+
 async def on_subscribe_entities(entity_ids: List[str]):
     _LOG.info("Subscribed: %s", entity_ids)
     for entity_id in entity_ids:
@@ -170,6 +187,7 @@ async def init_integration():
     config = BeoConfig(os.path.join(api.config_dir_path, "config.json"))
     api.add_listener(ucapi.Events.CONNECT, on_connect)
     api.add_listener(ucapi.Events.SUBSCRIBE_ENTITIES, on_subscribe_entities)
+    api.add_listener(ucapi.Events.EXIT_STANDBY, on_exit_standby)
 
     # Build the entities BEFORE the WebSocket server is up. A Remote that already
     # knows this driver reconnects within a second of the socket opening and

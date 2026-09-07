@@ -556,3 +556,36 @@ def test_cast_never_sends_data_url_as_thumbnail():
     player._cast.play_sync.assert_called_once_with("http://x", "audio/mpeg", "Energy Zürich", None)
     # The Remote's card still gets the data URL.
     assert player.entity.attributes["media_image_url"].startswith("data:")
+
+
+def test_wake_refreshes_state_stream_and_now_playing():
+    station = {"name": "Energy Zürich", "url": "http://x", "content_type": "audio/mpeg",
+               "image": "", "nowplaying": {"type": "icy"}}
+    api, player, client = _player_for("Davies9", "A9", [], [station])
+    client.get_state = AsyncMock(return_value={"volume": 55, "on": True})
+    client.restart_notifications = AsyncMock()
+    player._cast.play_sync = MagicMock(return_value=True)
+
+    async def run():
+        await _select_and_cast(player, f"{RADIO_PREFIX}Energy Zürich")
+        assert player._radio_metadata_active and not player._np_wake.is_set()
+        await player.on_wake()
+        client.restart_notifications.assert_awaited_once()
+        client.get_state.assert_awaited()
+        assert player.entity.attributes["volume"] == 55
+        assert player._np_wake.is_set()  # poller told to fetch now
+        player._stop_now_playing()
+    asyncio.run(run())
+
+
+def test_legacy_restart_notifications_replaces_task():
+    from uc_intg_bang_olufsen.legacy_client import LegacyBeoClient
+    c = LegacyBeoClient("10.0.0.9")
+    async def run():
+        async def never(): await asyncio.sleep(3600)
+        old = asyncio.ensure_future(never()); c._notify_task = old
+        c._notification_loop = never
+        await c.restart_notifications()
+        assert old.cancelled() and c._notify_task is not old and not c._notify_task.done()
+        c._notify_task.cancel()
+    asyncio.run(run())

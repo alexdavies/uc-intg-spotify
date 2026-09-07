@@ -66,6 +66,18 @@ class LegacyBeoClient:
         self._notify_task = asyncio.ensure_future(self._notification_loop())
         _LOG.info("Notification stream task started for %s", self.name)
 
+    async def restart_notifications(self) -> None:
+        """Drop and reopen the /BeoNotify stream (after a suspend the old TCP
+        connection may be dead without ever raising)."""
+        if self._notify_task and not self._notify_task.done():
+            self._notify_task.cancel()
+            try:
+                await self._notify_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._notify_task = None
+        await self.start_notifications()
+
     async def close(self) -> None:
         if self._notify_task:
             self._notify_task.cancel()

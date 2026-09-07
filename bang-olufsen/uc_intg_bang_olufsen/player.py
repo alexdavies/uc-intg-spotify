@@ -86,6 +86,7 @@ class BeoPlayer:
         self._cast = BeoCast(self._client.host, self._name)
         # Now-playing poller for the currently cast radio station (see nowplaying.py).
         self._np_task: Optional[asyncio.Task] = None
+        self._np_wake = asyncio.Event()  # set to fetch now-playing immediately
         self._cast_task: Optional[asyncio.Task] = None
         self._np_station: Optional[Dict[str, Any]] = None
         self._http: Optional[aiohttp.ClientSession] = None
@@ -138,6 +139,23 @@ class BeoPlayer:
         snapshot = await self._client.get_state()
         if snapshot:
             await self._apply(snapshot)
+
+    async def on_wake(self) -> None:
+        """The Remote left standby (the driver was frozen with it). Everything
+        we know may be stale: re-read the speaker, restart its notification
+        stream (a chunked HTTP stream can die silently across a suspend), and
+        fetch radio now-playing right away instead of waiting for the next poll."""
+        restart = getattr(self._client, "restart_notifications", None)
+        if restart:
+            await restart()
+        try:
+            snapshot = await self._client.get_state()
+            if snapshot:
+                await self._apply(snapshot)
+        except Exception as e:  # noqa: BLE001
+            _LOG.debug("[%s] wake refresh failed: %s", self._name, e)
+        if self._radio_metadata_active:
+            self._np_wake.set()
 
     # ----- command handling ------------------------------------------------
 
@@ -391,7 +409,12 @@ class BeoPlayer:
                 if info and info != last:
                     last = info
                     self.apply_radio_now_playing(station, info)
-                await asyncio.sleep(RADIO_NOW_PLAYING_SEC)
+                # Sleep until the next poll, or sooner if woken (Remote left standby).
+                self._np_wake.clear()
+                try:
+                    await asyncio.wait_for(self._np_wake.wait(), timeout=RADIO_NOW_PLAYING_SEC)
+                except asyncio.TimeoutError:
+                    pass
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
