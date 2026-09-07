@@ -84,6 +84,7 @@ class BeoPlayer:
         self._cast = BeoCast(self._client.host, self._name)
         # Now-playing poller for the currently cast radio station (see nowplaying.py).
         self._np_task: Optional[asyncio.Task] = None
+        self._cast_task: Optional[asyncio.Task] = None
         self._np_station: Optional[Dict[str, Any]] = None
         self._http: Optional[aiohttp.ClientSession] = None
         # Last known power state (Mozart reports it); used to ignore the
@@ -198,24 +199,24 @@ class BeoPlayer:
         if source in self._radio:
             station = self._radio[source]
             self._stop_now_playing()
-            ok = await self._cast_station(station)
-            if ok:
-                # Casting wakes the speaker; the legacy A9 sends no "on" event.
-                self._powered = True
-                # The cast carries no metadata back via the speaker's push, so
-                # set the now-playing card (station name + logo) ourselves.
-                self._update({
-                    Attributes.SOURCE: source,
-                    Attributes.MEDIA_TITLE: station["name"],
-                    Attributes.MEDIA_ARTIST: "",
-                    Attributes.MEDIA_ALBUM: "",
-                    Attributes.MEDIA_IMAGE_URL: station.get("image", ""),
-                    Attributes.MEDIA_TYPE: MediaType.RADIO,
-                    Attributes.MEDIA_DURATION: 0, Attributes.MEDIA_POSITION: 0,
-                    Attributes.STATE: States.PLAYING,
-                })
-                self._start_now_playing(station)
-            return _status(ok)
+            # Answer the Remote right away and cast in the background: launching
+            # the receiver and waiting for the stream to start can take longer
+            # than the Remote's command timeout ("Davies9 not responding").
+            # The card shows the station as buffering until playback is confirmed.
+            self._update({
+                Attributes.SOURCE: source,
+                Attributes.MEDIA_TITLE: station["name"],
+                Attributes.MEDIA_ARTIST: "",
+                Attributes.MEDIA_ALBUM: "",
+                Attributes.MEDIA_IMAGE_URL: station.get("image", ""),
+                Attributes.MEDIA_TYPE: MediaType.RADIO,
+                Attributes.MEDIA_DURATION: 0, Attributes.MEDIA_POSITION: 0,
+                Attributes.STATE: States.BUFFERING,
+            })
+            if self._cast_task and not self._cast_task.done():
+                self._cast_task.cancel()
+            self._cast_task = asyncio.ensure_future(self._cast_and_confirm(source, station))
+            return ucapi.StatusCodes.OK
         if source in self._playlists:
             self._stop_now_playing()
             return _status(await self.play_spotify_playlist(self._playlists[source], source))
@@ -347,7 +348,7 @@ class BeoPlayer:
 
     async def _cast_play_pause(self) -> bool:
         loop = asyncio.get_event_loop()
-        if self.entity.attributes.get(Attributes.STATE) == States.PLAYING:
+        if self.entity.attributes.get(Attributes.STATE) in (States.PLAYING, States.BUFFERING):
             ok = await loop.run_in_executor(None, self._cast.pause_sync)
             if ok:
                 self._update({Attributes.STATE: States.PAUSED})
@@ -401,6 +402,20 @@ class BeoPlayer:
             Attributes.MEDIA_IMAGE_URL: info.get("image_url") or station.get("image", ""),
         })
 
+    async def _cast_and_confirm(self, source: str, station: Dict[str, Any]) -> None:
+        """Background half of a radio selection: cast, then confirm on the card."""
+        ok = await self._cast_station(station)
+        if self.entity.attributes.get(Attributes.SOURCE) != source:
+            return  # superseded by another selection meanwhile
+        if ok:
+            # Casting wakes the speaker; the legacy A9 sends no "on" event.
+            self._powered = True
+            self._update({Attributes.STATE: States.PLAYING})
+            self._start_now_playing(station)
+        else:
+            _LOG.error("[%s] could not cast %s", self._name, station.get("name"))
+            self._update({Attributes.STATE: States.ON, Attributes.MEDIA_TITLE: f"{station['name']} (failed)"})
+
     async def _cast_station(self, station: Dict[str, str]) -> bool:
         """Cast a radio stream URL to this speaker's Chromecast (off the loop)."""
         loop = asyncio.get_event_loop()
@@ -426,7 +441,7 @@ class BeoPlayer:
     async def _power_on(self) -> bool:
         """Wake the speaker and resume the last station/playlist. On its own
         the A9 wakes to silence, so "on" without a source isn't much use."""
-        if self.entity.attributes.get(Attributes.STATE) == States.PLAYING:
+        if self.entity.attributes.get(Attributes.STATE) in (States.PLAYING, States.BUFFERING):
             return True
         ok = await self._client.power_on()
         if ok:
@@ -491,6 +506,8 @@ class BeoPlayer:
     def close(self) -> None:
         """Release the Chromecast connection (called on shutdown)."""
         self._stop_now_playing()
+        if self._cast_task and not self._cast_task.done():
+            self._cast_task.cancel()
         if self._http and not self._http.closed:
             asyncio.ensure_future(self._http.close())
         self._cast.disconnect()

@@ -96,6 +96,14 @@ def _player_for(name, serial, sources, radio_stations=None, playlists=None, spot
     return api, BeoPlayer(api, speaker, radio_stations or [], spotify, playlists or []), client
 
 
+async def _select_and_cast(player, source):
+    """Select a radio source and wait for the background cast task."""
+    rc = await player._select_source({"source": source})
+    if player._cast_task:
+        await player._cast_task
+    return rc
+
+
 def test_picker_has_radio_and_playlists_no_raw_inputs():
     api, player, client = _player_for(
         "Beosound Emerge", "EMERGE",
@@ -137,11 +145,19 @@ def test_player_select_radio_casts_stream_url():
           "image": "http://img/tj.png"}])
     # Casting is delegated to BeoCast.play_sync (run in an executor).
     player._cast.play_sync = MagicMock(return_value=True)
-    rc = asyncio.run(player._select_source({"source": f"{RADIO_PREFIX}triple j"}))
-    player._cast.play_sync.assert_called_once_with(
-        "http://x/aac", "audio/aac", "triple j", "http://img/tj.png")
-    assert rc == ucapi.StatusCodes.OK
-    # The now-playing card is set from the station (push carries no cast metadata).
+
+    async def run():
+        from ucapi.media_player import States
+        rc = await player._select_source({"source": f"{RADIO_PREFIX}triple j"})
+        # Acknowledged immediately (the Remote must not wait on the cast) and
+        # shown as buffering with the station card already filled in.
+        assert rc == ucapi.StatusCodes.OK
+        assert player.entity.attributes["state"] == States.BUFFERING
+        await player._cast_task
+        player._cast.play_sync.assert_called_once_with(
+            "http://x/aac", "audio/aac", "triple j", "http://img/tj.png")
+        assert player.entity.attributes["state"] == States.PLAYING
+    asyncio.run(run())
     attrs = player.entity.attributes
     assert attrs["source"] == f"{RADIO_PREFIX}triple j"
     assert attrs["media_title"] == "triple j"
@@ -334,7 +350,7 @@ def test_radio_now_playing_owns_card_while_active():
     player._cast.play_sync = MagicMock(return_value=True)
 
     async def run():
-        rc = await player._select_source({"source": f"{RADIO_PREFIX}Energy Zürich"})
+        rc = await _select_and_cast(player, f"{RADIO_PREFIX}Energy Zürich")
         assert rc == ucapi.StatusCodes.OK
         assert player._radio_metadata_active  # poller started
         player.apply_radio_now_playing(station, {"title": "Single Soon", "artist": "Selena Gomez", "image_url": "http://cover.jpg"})
@@ -393,7 +409,7 @@ def test_cast_transport_uses_chromecast_session():
     player._cast.pause_sync = MagicMock(return_value=True)
 
     async def run():
-        await player._select_source({"source": f"{RADIO_PREFIX}triple j"})
+        await _select_and_cast(player, f"{RADIO_PREFIX}triple j")
         assert player.entity.attributes["state"] == States.PLAYING
         # STOP -> cast session, not the A9's (ignored) stream command.
         assert await player.cmd_handler(player.entity, MpCommands.STOP, None) == ucapi.StatusCodes.OK
@@ -402,6 +418,7 @@ def test_cast_transport_uses_chromecast_session():
         assert player.entity.attributes["source"] == f"{RADIO_PREFIX}triple j"
         # PLAY while stopped re-casts the station.
         await player.cmd_handler(player.entity, MpCommands.PLAY_PAUSE, None)
+        await player._cast_task
         assert player._cast.play_sync.call_count == 2
         assert player.entity.attributes["state"] == States.PLAYING
         # PAUSE while playing pauses the cast.
@@ -433,10 +450,11 @@ def test_power_on_resumes_last_source(tmp_path):
         await player.cmd_handler(player.entity, MpCommands.ON, None)
         client.power_on.assert_awaited_once(); player._cast.play_sync.assert_not_called()
         # Play a station, switch off, power on -> the station is re-cast.
-        await player._select_source({"source": f"{RADIO_PREFIX}triple j"})
+        await _select_and_cast(player, f"{RADIO_PREFIX}triple j")
         assert cfg.get_last_source("A9") == f"{RADIO_PREFIX}triple j"
         player.entity.attributes["state"] = States.OFF
         rc = await player.cmd_handler(player.entity, MpCommands.ON, None)
+        await player._cast_task
         assert rc == ucapi.StatusCodes.OK and player._cast.play_sync.call_count == 2
         assert player.entity.attributes["state"] == States.PLAYING
         player._stop_now_playing()
@@ -481,3 +499,19 @@ def test_cast_stop_quits_receiver_app_and_pause_falls_back():
     fake.media_controller.status.media_session_id = 7; fake.quit_app.reset_mock()
     assert c.pause_sync() is True
     fake.media_controller.pause.assert_called_once(); fake.quit_app.assert_not_called()
+
+
+def test_failed_cast_is_reported_on_card():
+    from ucapi.media_player import States
+    station = {"name": "triple j", "url": "http://x", "content_type": "audio/aac", "image": ""}
+    api, player, client = _player_for("Davies9", "A9", [], [station])
+    player._cast.play_sync = MagicMock(return_value=False)
+
+    async def run():
+        rc = await player._select_source({"source": f"{RADIO_PREFIX}triple j"})
+        assert rc == ucapi.StatusCodes.OK  # acknowledged; outcome arrives on the card
+        await player._cast_task
+        assert player.entity.attributes["state"] == States.ON
+        assert "failed" in player.entity.attributes["media_title"]
+        assert not player._radio_metadata_active
+    asyncio.run(run())

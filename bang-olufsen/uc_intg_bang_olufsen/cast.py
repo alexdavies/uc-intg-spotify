@@ -13,6 +13,7 @@ synchronous and thread-based, so the async player calls these via an executor.
 import logging
 import threading
 import time
+import uuid
 from typing import Optional
 
 import pychromecast
@@ -42,7 +43,26 @@ class BeoCast:
                     return cast
             except Exception:  # noqa: BLE001 - any error -> reconnect below
                 pass
-            self._teardown()  # stale connection; rediscover
+            self._teardown()  # stale connection; reconnect
+
+        # Connect straight to the speaker's IP (about a second). mDNS discovery
+        # is only a fallback: its 10 s window alone exceeds the Remote's command
+        # timeout, which showed up as "not responding" on the first command
+        # after the Remote had been asleep.
+        try:
+            cast = pychromecast.get_chromecast_from_host(
+                (self._host, 8009, uuid.uuid4(), None, self._name), tries=1, timeout=5
+            )
+            cast.wait(timeout=6)
+            self._cast = cast
+            return cast
+        except Exception as e:  # noqa: BLE001
+            _LOG.warning("Direct cast connection to %s (%s) failed: %s; falling back to discovery",
+                         self._name, self._host, e)
+            try:
+                cast.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
 
         # The browser's zeroconf instance must stay alive for cast.wait() (and
         # later reconnects) to resolve the device, so we keep it until disconnect.
